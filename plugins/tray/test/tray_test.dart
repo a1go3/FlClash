@@ -196,9 +196,10 @@ void main() {
     await _emit('onIconActivated', <String, Object?>{'x': 1200});
     await _emit('onIconActivated', null);
 
-    expect(
-      events.map((event) => (event as TrayIconActivated).anchor),
-      [const Rect.fromLTWH(1200, 0, 40.5, 24), null, null],
-    );
+    expect(events.map((event) => (event as TrayIconActivated).anchor), [
+      const Rect.fromLTWH(1200, 0, 40.5, 24),
+      null,
+      null,
+    ]);
   });
 }
