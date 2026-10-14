@@ -1,0 +1,49 @@
+From b92a300cbdb1811c65edaaaf54c07b68aeb9ccb9 Mon Sep 17 00:00:00 2001
+From: a1go3 <116062404+a1go3@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 15:15:18 +0300
+Subject: [PATCH] feat(update): check this fork's releases for updates
+
+The update check and the About link now point at a1go3/FlClash, whose releases carry the fork's core and dashboard changes. Fork release tags read pq-<version>, so the check strips any non-numeric prefix instead of only a leading v.
+
+Changelog: Update checks follow this fork's releases
+---
+ lib/common/constant.dart | 2 +-
+ lib/common/request.dart  | 8 +++++---
+ 2 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/lib/common/constant.dart b/lib/common/constant.dart
+index 401541e..2951210 100644
+--- a/lib/common/constant.dart
++++ b/lib/common/constant.dart
+@@ -129,7 +129,7 @@ const systemDnsRecordKey = 'system_dns_record';
+ const bootRecordKey = 'boot_record';
+ const defaultSystemDnsFallback = '223.5.5.5';
+ const double dialogCommonWidth = 300;
+-const repository = 'chen08209/FlClash';
++const repository = 'a1go3/FlClash';
+ const maxMobileWidth = 600;
+ const maxLaptopWidth = 840;
+ const defaultTestUrl = 'https://www.gstatic.com/generate_204';
+diff --git a/lib/common/request.dart b/lib/common/request.dart
+index cf7ca86..a15890d 100644
+--- a/lib/common/request.dart
++++ b/lib/common/request.dart
+@@ -88,10 +88,12 @@ class Request {
+   /// Null when this build is current; throws when GitHub cannot be asked.
+   Future<Map<String, dynamic>?> checkForUpdate() async {
+     final release = await latestRelease();
+-    final remoteVersion = release['tag_name'] as String;
++    final remoteVersion = (release['tag_name'] as String).replaceFirst(
++      RegExp(r'^\D+'),
++      '',
++    );
+     final version = globalState.packageInfo.version;
+-    final hasUpdate =
+-        compareVersions(remoteVersion.replaceAll('v', ''), version) > 0;
++    final hasUpdate = compareVersions(remoteVersion, version) > 0;
+     return hasUpdate ? release : null;
+   }
+ 
+-- 
+2.55.0.windows.3
+

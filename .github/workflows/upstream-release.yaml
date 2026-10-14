@@ -164,9 +164,16 @@ jobs:
         run: |
           release="pq-${TAG#v}"
           (cd dist && sha256sum ./* > SHA256SUMS)
+          {
+            echo "Upstream $UPSTREAM $TAG with this fork's changes: safari and firefox client fingerprints with a post-quantum (X25519MLKEM768) key share, a one-line dashboard proxy groups card with a delay test button, and update checks against this fork. Unsigned build."
+            echo
+            echo "Upstream release: https://github.com/$UPSTREAM/releases/tag/$TAG"
+            echo
+            gh release view "$TAG" -R "$UPSTREAM" --json body --jq .body | sed -n '/<!-- flclash:changelog:begin -->/,/^-->/p'
+          } > notes.md
           gh release delete "$release" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes 2> /dev/null || true
           gh release create "$release" ./dist/* \
             -R "$GITHUB_REPOSITORY" \
             --target "${{ github.sha }}" \
             --title "FlClash ${TAG#v} (fork)" \
-            --notes "Upstream $UPSTREAM $TAG with this fork's changes: safari and firefox client fingerprints with a post-quantum (X25519MLKEM768) key share, and a delay test button on the dashboard proxy groups card. Unsigned build. Upstream notes: https://github.com/$UPSTREAM/releases/tag/$TAG"
+            --notes-file notes.md
