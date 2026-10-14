@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -147,7 +148,7 @@ final class Tray {
   Future<void> _onPlatformCall(MethodCall call) async {
     switch (call.method) {
       case _eventIconActivated:
-        _events.add(const TrayIconActivated());
+        _events.add(TrayIconActivated(anchor: _decodeRect(call.arguments)));
       case _eventMenuRequested:
         _events.add(const TrayMenuRequested());
       case _eventMenuItemSelected:
@@ -171,6 +172,28 @@ final class Tray {
         }
         _events.add(TrayMenuItemSelected(item));
     }
+  }
+
+  static Rect? _decodeRect(Object? arguments) {
+    if (arguments is! Map) {
+      return null;
+    }
+    final values = [
+      arguments['x'],
+      arguments['y'],
+      arguments['width'],
+      arguments['height'],
+    ];
+    if (values.any((value) => value is! num)) {
+      return null;
+    }
+    final [x, y, width, height] = values.cast<num>();
+    return Rect.fromLTWH(
+      x.toDouble(),
+      y.toDouble(),
+      width.toDouble(),
+      height.toDouble(),
+    );
   }
 
   /// Scales probed in Flutter's `2.0x/` variant layout; the README says how

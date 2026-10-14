@@ -107,6 +107,17 @@ class DesktopWindow {
     return _call('show', {'inactive': inactive});
   }
 
+  /// macOS only: shows the window hanging below [anchor], a screen rect with
+  /// a top-left origin, until the app deactivates; [show] detaches it again.
+  Future<void> showAttached(Rect anchor) {
+    return _call('showAttached', {
+      'x': anchor.left,
+      'y': anchor.top,
+      'width': anchor.width,
+      'height': anchor.height,
+    });
+  }
+
   Future<void> hide() => _call('hide');
 
   Future<bool> isVisible() => _invoke<bool>('isVisible');

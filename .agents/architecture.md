@@ -1261,7 +1261,10 @@ table. `lib/common/window.dart` and `lib/manager/window_manager.dart` are the on
   is true only for `none` and the runner keeps the default visual.
 - macOS: `WindowPlugin.instance` is reached from `AppDelegate` for `applicationShouldTerminate` (emits
   `should-terminate`) and `applicationShouldHandleReopen` (emits `activate`); `MainFlutterWindow` calls
-  `hiddenWindowAtLaunch()` so the first `order` keeps the window hidden until Dart shows it.
+  `hiddenWindowAtLaunch()` so the first `order` keeps the window hidden until Dart shows it. A left click on the
+  status item calls `showAttached` with the icon's frame: the window keeps its size, hangs below the icon on the
+  active Space without touching the Dock policy, and hides when the app deactivates (not on `resignKey`, so open
+  and save panels keep it). The next plain `show` moves it back to its previous origin.
 - Window effects (`transparent`, `blur`, `acrylic`, `mica`) are capability-gated by `isEffectSupported`; the Flutter
   content must paint a translucent background for them to show. `ThemeProps.sidebarBlur` (on by default) drives
   them: `Window.setBlur` picks `blur` on macOS and `acrylic` (or `blur`) on Windows and caches only a successful

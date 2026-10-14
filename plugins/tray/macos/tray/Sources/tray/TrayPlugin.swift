@@ -86,13 +86,29 @@ public class TrayPlugin: NSObject, FlutterPlugin {
     }
 
     private func makeStatusItem() -> TrayStatusItem? {
-        guard let item = TrayStatusItem(onMenuRequested: { [weak self] in
-            self?.channel.invokeMethod("onMenuRequested", arguments: nil)
-        }) else {
+        guard let item = TrayStatusItem(
+            onActivated: { [weak self] frame in
+                self?.channel.invokeMethod("onIconActivated", arguments: frame.map(Self.anchor))
+            },
+            onMenuRequested: { [weak self] in
+                self?.channel.invokeMethod("onMenuRequested", arguments: nil)
+            }
+        ) else {
             return nil
         }
         statusItem = item
         return item
+    }
+
+    // Top-left origin on the primary screen, the frame the window plugin's bounds use.
+    private static func anchor(_ frame: NSRect) -> [String: Double] {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        return [
+            "x": Double(frame.minX),
+            "y": Double(primaryHeight - frame.maxY),
+            "width": Double(frame.width),
+            "height": Double(frame.height),
+        ]
     }
 
     private func makeImage(_ icon: [String: Any]) -> NSImage? {

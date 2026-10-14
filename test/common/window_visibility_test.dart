@@ -150,4 +150,18 @@ void main() {
 
     expect(calls, ['hide', 'dock:off', 'show', 'dock:on']);
   });
+
+  test('the attached toggle shows without touching the Dock', () async {
+    final native = _FakeNativeWindow()..visible = false;
+    final controller = native.controller(dockSettleDuration: Duration.zero);
+    Future<void> showAttached() async {
+      native.calls.add('attach');
+      native.visible = true;
+    }
+
+    await controller.toggleAttached(showAttached);
+    await controller.toggleAttached(showAttached);
+
+    expect(native.calls, ['attach', 'hide', 'dock:off']);
+  });
 }

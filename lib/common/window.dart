@@ -179,6 +179,14 @@ class Window implements WindowPort {
   @override
   Future<void> toggle() => _visibility.toggle();
 
+  /// Hangs the window below the tray icon at [anchor]; the plugin dismisses
+  /// it when the app deactivates.
+  Future<void> toggleAttached(Rect anchor) {
+    return _visibility.toggleAttached(() async {
+      await desktopWindow.showAttached(anchor);
+    });
+  }
+
   Future<void> _showWindow() async {
     await desktopWindow.show();
     await desktopWindow.focus();
@@ -284,6 +292,18 @@ class WindowVisibilityController {
       await _show();
     }
   });
+
+  /// The attached window is a menu-bar panel, so showing it leaves the Dock
+  /// icon as it was.
+  Future<void> toggleAttached(Future<void> Function() showAttached) {
+    return _enqueue(() async {
+      if (await _isWindowVisible()) {
+        await _hide();
+      } else {
+        await showAttached();
+      }
+    });
+  }
 
   Future<void> _enqueue(Future<void> Function() step) {
     final previous = _queue;

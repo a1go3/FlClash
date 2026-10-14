@@ -1,3 +1,5 @@
+import 'dart:ui' show Rect;
+
 import 'tray_menu.dart';
 
 sealed class TrayEvent {
@@ -5,7 +7,11 @@ sealed class TrayEvent {
 }
 
 final class TrayIconActivated extends TrayEvent {
-  const TrayIconActivated();
+  const TrayIconActivated({this.anchor});
+
+  /// The icon's screen frame, top-left origin on the primary screen, where the
+  /// platform reports one (macOS).
+  final Rect? anchor;
 }
 
 final class TrayMenuRequested extends TrayEvent {

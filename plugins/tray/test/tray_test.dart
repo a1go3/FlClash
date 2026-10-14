@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -180,4 +181,24 @@ void main() {
       expect([oldSelected, newSelected], [0, 1]);
     },
   );
+
+  test('icon activation decodes a whole anchor frame', () async {
+    final events = <TrayEvent>[];
+    final subscription = Tray.instance.events.listen(events.add);
+    addTearDown(subscription.cancel);
+
+    await _emit('onIconActivated', <String, Object?>{
+      'x': 1200,
+      'y': 0,
+      'width': 40.5,
+      'height': 24,
+    });
+    await _emit('onIconActivated', <String, Object?>{'x': 1200});
+    await _emit('onIconActivated', null);
+
+    expect(
+      events.map((event) => (event as TrayIconActivated).anchor),
+      [const Rect.fromLTWH(1200, 0, 40.5, 24), null, null],
+    );
+  });
 }

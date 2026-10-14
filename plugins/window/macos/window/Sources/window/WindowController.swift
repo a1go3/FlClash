@@ -10,8 +10,12 @@ final class WindowController: NSObject, NSWindowDelegate {
     private var style = WindowStyle()
     private var wasZoomed = false
     private var geometrySettle: DispatchWorkItem?
+    private var detachedOrigin: NSPoint?
+    private var detachedCollectionBehavior: NSWindow.CollectionBehavior = []
+    private var resignActiveObserver: NSObjectProtocol?
 
     private static let geometrySettleDelay: DispatchTimeInterval = .milliseconds(150)
+    private static let attachedGap: CGFloat = 4
 
     func ensureInitialized(with window: NSWindow) {
         guard self.window !== window else { return }
@@ -20,6 +24,14 @@ final class WindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         wasZoomed = window.isZoomed
         WindowEffectView.install(in: window)
+        // App deactivation rather than resignKey, so the app's own open and
+        // save panels do not dismiss the attached window.
+        resignActiveObserver = resignActiveObserver ?? NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.detachedOrigin != nil, self.window?.isVisible == true else { return }
+            try? self.hide()
+        }
     }
 
     private func requireWindow() throws -> NSWindow {
@@ -31,6 +43,50 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     func show(inactive: Bool) throws {
         let window = try requireWindow()
+        detach(window)
+        present(window, inactive: inactive)
+    }
+
+    /// Shows the window hanging below [anchor] (top-left screen coordinates),
+    /// like a status item popover, until the app deactivates or a plain show
+    /// puts it back where it was.
+    func showAttached(to anchor: NSRect) throws {
+        let window = try requireWindow()
+        if window.styleMask.contains(.fullScreen) {
+            try show(inactive: false)
+            return
+        }
+        let flipped = NSRect(
+            x: anchor.minX,
+            y: primaryScreenHeight - anchor.maxY,
+            width: anchor.width,
+            height: anchor.height
+        )
+        let screen = NSScreen.screens.first { $0.frame.intersects(flipped) } ?? window.screen ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? window.frame
+        let size = window.frame.size
+        let gap = Self.attachedGap
+        let x = min(max(flipped.midX - size.width / 2, visible.minX + gap), visible.maxX - size.width - gap)
+        let top = min(flipped.minY, visible.maxY) - gap
+        if detachedOrigin == nil {
+            detachedOrigin = window.frame.origin
+            detachedCollectionBehavior = window.collectionBehavior
+            window.collectionBehavior = detachedCollectionBehavior
+                .subtracting(.canJoinAllSpaces)
+                .union(.moveToActiveSpace)
+        }
+        window.setFrameOrigin(NSPoint(x: x, y: max(top - size.height, visible.minY)))
+        present(window, inactive: false)
+    }
+
+    private func detach(_ window: NSWindow) {
+        guard let origin = detachedOrigin else { return }
+        detachedOrigin = nil
+        window.collectionBehavior = detachedCollectionBehavior
+        window.setFrameOrigin(origin)
+    }
+
+    private func present(_ window: NSWindow, inactive: Bool) {
         let wasVisible = window.isVisible
         if inactive {
             window.orderFront(nil)

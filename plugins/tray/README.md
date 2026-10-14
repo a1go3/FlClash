@@ -54,8 +54,9 @@ AppIndicator menus travel over dbusmenu, which carries no column for free text, 
 
 `Tray.instance.events` is a broadcast stream of `TrayIconActivated`, `TrayMenuRequested` and
 `TrayMenuItemSelected`. Per-item `onSelected` callbacks fire before the corresponding stream event.
-On Windows a left click is `TrayIconActivated` and a right click `TrayMenuRequested`; macOS opens the
-menu from either button, as status items do there, so it only sends `TrayMenuRequested`.
+A left click is `TrayIconActivated` and a right click `TrayMenuRequested`; on macOS a Control-click
+counts as a right click, and `TrayIconActivated.anchor` carries the status item's screen frame
+(top-left origin on the primary screen) so the app can hang its window below the icon.
 
 ## Capabilities
 

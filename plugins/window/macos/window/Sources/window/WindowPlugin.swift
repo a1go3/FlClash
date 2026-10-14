@@ -118,6 +118,15 @@ public class WindowPlugin: NSObject, FlutterPlugin {
 
         var handlers: [String: (Arguments) throws -> Any?] = [
             "show": { args in try controller.show(inactive: args.bool("inactive")); return nil },
+            "showAttached": { args in
+                try controller.showAttached(to: NSRect(
+                    x: try args.double("x"),
+                    y: try args.double("y"),
+                    width: try args.double("width"),
+                    height: try args.double("height")
+                ))
+                return nil
+            },
             "hide": { _ in try controller.hide(); return nil },
             "isVisible": { _ in try controller.isVisible() },
             "focus": { _ in try controller.focus(); return nil },
