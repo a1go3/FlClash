@@ -1,9 +1,6 @@
 name: fork build
 
 on:
-  push:
-    branches:
-      - utls-pq-fingerprints
   workflow_dispatch:
 
 concurrency:
@@ -92,32 +89,3 @@ jobs:
           name: artifact-${{ matrix.platform }}-${{ matrix.arch }}
           path: ./dist
           overwrite: true
-
-  release:
-    name: Release
-    needs: [ build ]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download
-        uses: actions/download-artifact@v4
-        with:
-          path: ./dist/
-          pattern: artifact-*
-          merge-multiple: true
-
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)"
-          tag="pq-${version}-${{ github.run_number }}"
-          (cd dist && sha256sum ./* > SHA256SUMS)
-          gh release create "$tag" ./dist/* \
-            --target "${{ github.sha }}" \
-            --title "FlClash ${version} + post-quantum safari/firefox fingerprints (${tag})" \
-            --notes "Upstream FlClash ${version} with utls from the v1.9.0-mod-meta branch: client-fingerprint safari is Safari 26.3 and firefox is Firefox 148, both with an X25519MLKEM768 key share. Unsigned build."
