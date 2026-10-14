@@ -77,7 +77,7 @@ extension DashboardWidgetView on DashboardWidget {
     ),
     DashboardWidget.proxyGroups => const GridItem(
       key: ValueKey(DashboardWidget.proxyGroups),
-      crossAxisCellCount: 4,
+      crossAxisCellCount: 8,
       child: ProxyGroupsCard(),
     ),
     DashboardWidget.profiles => const GridItem(

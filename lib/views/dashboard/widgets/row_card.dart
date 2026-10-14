@@ -11,7 +11,7 @@ const _rowSpacing = 4.0;
 const _pillInset = 8.0;
 const _lineRowVerticalPadding = 8.0;
 
-double _pillInsetOf(BuildContext context) {
+double rowCardPillInsetOf(BuildContext context) {
   return min(_pillInset.mAp, DashboardWidgetMetrics.insetOf(context));
 }
 
@@ -22,10 +22,11 @@ double rowCardLineExtentOf(BuildContext context) {
       _lineRowVerticalPadding.mAp * 2;
 }
 
-/// A two-line dashboard card whose rows, not the card, take the taps.
+/// A dashboard card whose rows, not the card, take the taps.
 class RowCardFrame extends StatelessWidget {
-  const RowCardFrame({super.key, required this.child});
+  const RowCardFrame({super.key, this.lines = 2, required this.child});
 
+  final int lines;
   final Widget child;
 
   @override
@@ -33,7 +34,7 @@ class RowCardFrame extends StatelessWidget {
     final colorScheme = context.colorScheme;
     final shape = AppShape.all(DashboardWidgetMetrics.radiusOf(context));
     return SizedBox(
-      height: DashboardWidgetMetrics.heightOf(context, 2),
+      height: DashboardWidgetMetrics.heightOf(context, lines),
       child: Container(
         clipBehavior: Clip.antiAlias,
         decoration: ShapeDecoration(
@@ -84,7 +85,7 @@ class RowCardPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pillInset = _pillInsetOf(context);
+    final pillInset = rowCardPillInsetOf(context);
     return Column(
       children: [
         header,
@@ -158,7 +159,7 @@ class RowCardPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final inset = DashboardWidgetMetrics.insetOf(context);
-    final pillInset = _pillInsetOf(context);
+    final pillInset = rowCardPillInsetOf(context);
     final contentInset = inset - pillInset;
     return LayoutBuilder(
       builder: (context, constraints) {

@@ -90,6 +90,31 @@ void main() {
     expect(find.text('No Proxy group yet'), findsOneWidget);
   });
 
+  testWidgets('offers a delay test only once there are groups', (tester) async {
+    await pumpCard(tester);
+    expect(find.byTooltip('Delay test'), findsNothing);
+
+    container.read(groupsProvider.notifier).value = manyGroups();
+    await tester.pump();
+    expect(find.byTooltip('Delay test'), findsOneWidget);
+  });
+
+  testWidgets('a single group takes one line', (tester) async {
+    container.read(groupsProvider.notifier).value = [
+      _group('Auto', ['HK-01']),
+    ];
+    await pumpCard(tester);
+    final single = tester.getSize(find.byType(ProxyGroupsCard)).height;
+
+    container.read(groupsProvider.notifier).value = manyGroups();
+    await tester.pump();
+    final many = tester.getSize(find.byType(ProxyGroupsCard)).height;
+
+    expect(single, 80);
+    expect(many, greaterThan(single));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('fits more groups as the card grows taller', (tester) async {
     container.read(groupsProvider.notifier).value = manyGroups();
 
@@ -242,7 +267,12 @@ void main() {
     ];
     await pumpCard(tester);
     return tester
-        .widgetList<Tooltip>(find.byType(Tooltip))
+        .widgetList<Tooltip>(
+          find.descendant(
+            of: find.byType(RowCardPill),
+            matching: find.byType(Tooltip),
+          ),
+        )
         .map((tooltip) => tooltip.message);
   }
 

@@ -23,22 +23,41 @@ class ProxyGroupsCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final groups = ref.watch(visibleGroupsStateProvider).value;
+    Future<void> onDelayTest() =>
+        ref.read(proxiesActionProvider.notifier).delayTestGroups(groups);
+    void onSelect(Group group) => showSheet<void>(
+      context: context,
+      builder: (_) => _ProxyGroupSheet(groupName: group.name),
+    );
+    if (groups.length == 1) {
+      return RowCardFrame(
+        lines: 1,
+        child: _GroupLine(
+          group: groups.single,
+          onDelayTest: onDelayTest,
+          onSelect: onSelect,
+        ),
+      );
+    }
     return RowCardFrame(
       child: _GroupsPane(
         groups: groups,
-        onSelect: (group) => showSheet<void>(
-          context: context,
-          builder: (_) => _ProxyGroupSheet(groupName: group.name),
-        ),
+        onDelayTest: onDelayTest,
+        onSelect: onSelect,
       ),
     );
   }
 }
 
 class _GroupsPane extends StatefulWidget {
-  const _GroupsPane({required this.groups, required this.onSelect});
+  const _GroupsPane({
+    required this.groups,
+    required this.onDelayTest,
+    required this.onSelect,
+  });
 
   final List<Group> groups;
+  final Future<void> Function() onDelayTest;
   final void Function(Group group) onSelect;
 
   @override
@@ -58,13 +77,29 @@ class _GroupsPaneState extends State<_GroupsPane> {
   Widget build(BuildContext context) {
     final groups = widget.groups;
     final appLocalizations = context.appLocalizations;
+    final padding = DashboardWidgetMetrics.paddingOf(context);
     return RowCardPane(
-      header: InfoHeader(
-        padding: DashboardWidgetMetrics.paddingOf(context).copyWith(bottom: 0),
-        info: Info(
-          label: appLocalizations.proxyGroup,
-          glyph: AppGlyphs.proxies,
-        ),
+      header: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: InfoHeader(
+              padding: padding.copyWith(
+                bottom: 0,
+                right: groups.isEmpty ? null : _summaryGap,
+              ),
+              info: Info(
+                label: appLocalizations.proxyGroup,
+                glyph: AppGlyphs.proxies,
+              ),
+            ),
+          ),
+          if (groups.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.only(top: padding.top, right: padding.right),
+              child: _DelayTestButton(onPressed: widget.onDelayTest),
+            ),
+        ],
       ),
       body: groups.isEmpty
           ? RowCardEmpty(
@@ -98,6 +133,97 @@ class _GroupsPaneState extends State<_GroupsPane> {
                 );
               },
             ),
+    );
+  }
+}
+
+class _GroupLine extends StatelessWidget {
+  const _GroupLine({
+    required this.group,
+    required this.onDelayTest,
+    required this.onSelect,
+  });
+
+  final Group group;
+  final Future<void> Function() onDelayTest;
+  final void Function(Group group) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final pillInset = rowCardPillInsetOf(context);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        DashboardWidgetMetrics.insetOf(context),
+        pillInset,
+        pillInset,
+        pillInset,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: _summaryGap,
+        children: [
+          Center(
+            child: GlyphIcon(
+              AppGlyphs.proxies,
+              color: context.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          Expanded(
+            child: RowCardPill(
+              onTap: () => onSelect(group),
+              child: _GroupSummary(group: group),
+            ),
+          ),
+          Center(child: _DelayTestButton(onPressed: onDelayTest)),
+        ],
+      ),
+    );
+  }
+}
+
+class _DelayTestButton extends StatefulWidget {
+  const _DelayTestButton({required this.onPressed});
+
+  final Future<void> Function() onPressed;
+
+  @override
+  State<_DelayTestButton> createState() => _DelayTestButtonState();
+}
+
+class _DelayTestButtonState extends State<_DelayTestButton> {
+  var _isLoading = false;
+
+  Future<void> _handlePressed() async {
+    setState(() => _isLoading = true);
+    try {
+      await widget.onPressed();
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final iconSize = 16.ap;
+    return SizedBox.square(
+      dimension: globalState.measure.sectionHeaderHeight,
+      child: IconButton(
+        tooltip: context.appLocalizations.delayTest,
+        padding: EdgeInsets.zero,
+        onPressed: _isLoading ? null : _handlePressed,
+        icon: _isLoading
+            ? SizedBox.square(
+                dimension: iconSize,
+                child: const CommonCircleLoading(),
+              )
+            : GlyphIcon(
+                AppGlyphs.bolt,
+                size: iconSize,
+                color: context.colorScheme.onSurfaceVariant,
+              ),
+      ),
     );
   }
 }
