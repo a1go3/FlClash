@@ -1,0 +1,166 @@
+name: upstream release
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Upstream tag to build (default the latest release)
+        required: false
+      force:
+        description: Rebuild even if this fork already has the release
+        type: boolean
+        default: false
+
+concurrency:
+  group: upstream-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: chen08209/FlClash
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - name: Find the upstream release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          tag="${INPUT_TAG:-$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$FORCE" != 'true' ]] && gh release view "pq-${tag#v}" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "pq-${tag#v} already exists"
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "building $tag"
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: [ check ]
+    if: needs.check.outputs.build == 'true'
+    name: ${{ matrix.platform }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: windows
+            os: windows-2022
+            arch: amd64
+          - platform: macos
+            os: macos-latest
+            arch: arm64
+          - platform: macos
+            os: macos-15-intel
+            arch: amd64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Enable git long paths and LF checkouts (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
+
+      - name: Checkout upstream
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM }}
+          ref: ${{ needs.check.outputs.tag }}
+          submodules: recursive
+
+      - name: Checkout fork patches
+        uses: actions/checkout@v4
+        with:
+          path: .fork
+
+      - name: Read upstream toolchain versions
+        run: |
+          workflow=.github/workflows/build.yaml
+          echo "FLUTTER_VERSION=$(sed -n "s/^  FLUTTER_VERSION: *'\(.*\)'/\1/p" "$workflow")" >> "$GITHUB_ENV"
+          echo "GO_VERSION=$(sed -n "s/^  GO_VERSION: *'\(.*\)'/\1/p" "$workflow")" >> "$GITHUB_ENV"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: core/go.sum
+
+      - name: Apply fork changes
+        run: bash .fork/.github/fork/apply.sh .fork && rm -rf .fork
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: upstream-${{ matrix.platform }}-${{ matrix.arch }}
+          workspaces: services/helper
+          cache-directories: .dart_tool/hooks_runner
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Xcode
+        if: matrix.platform == 'macos'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
+          xcodebuild -version
+
+      - name: Get Flutter Dependency
+        run: |
+          flutter --version
+          flutter pub get
+
+      - name: Disable Impeller on Intel macOS
+        if: matrix.platform == 'macos' && matrix.arch == 'amd64'
+        run: plutil -replace FLTEnableImpeller -bool NO macos/Runner/Info.plist
+
+      - name: Setup
+        run: dart setup.dart ${{ matrix.platform }} --env stable -v
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ./dist
+          overwrite: true
+
+  release:
+    needs: [ check, build ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download
+        uses: actions/download-artifact@v4
+        with:
+          path: ./dist/
+          pattern: artifact-*
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          release="pq-${TAG#v}"
+          (cd dist && sha256sum ./* > SHA256SUMS)
+          gh release delete "$release" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes 2> /dev/null || true
+          gh release create "$release" ./dist/* \
+            -R "$GITHUB_REPOSITORY" \
+            --target "${{ github.sha }}" \
+            --title "FlClash ${TAG#v} (fork)" \
+            --notes "Upstream $UPSTREAM $TAG with this fork's changes: safari and firefox client fingerprints with a post-quantum (X25519MLKEM768) key share, and a delay test button on the dashboard proxy groups card. Unsigned build. Upstream notes: https://github.com/$UPSTREAM/releases/tag/$TAG"

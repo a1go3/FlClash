@@ -1,0 +1,323 @@
+From eac083a2239d4d5e112b6dd677fec3006e2ec091 Mon Sep 17 00:00:00 2001
+From: a1go3 <116062404+a1go3@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 11:41:57 +0300
+Subject: [PATCH] feat(dashboard): test proxy group delays from the proxy
+ groups card
+
+The card shows each group's delay but offered no way to measure it, so a fresh session showed none until the proxies page was opened. A bolt action beside the card title now tests every visible group.
+
+The card now spans a full row, and with a single group it collapses to one line: the proxies glyph, the group and its selected node, and the bolt, instead of a two-line card that is half empty.
+
+Changelog: Test proxy group delays from the dashboard's proxy groups card, which takes one line for a single group
+---
+ lib/views/dashboard/widget_registry.dart      |   2 +-
+ lib/views/dashboard/widgets/proxy_groups.dart | 148 ++++++++++++++++--
+ lib/views/dashboard/widgets/row_card.dart     |  13 +-
+ .../dashboard/proxy_groups_card_test.dart     |  32 +++-
+ 4 files changed, 176 insertions(+), 19 deletions(-)
+
+diff --git a/lib/views/dashboard/widget_registry.dart b/lib/views/dashboard/widget_registry.dart
+index 265ad37..3cf2a95 100644
+--- a/lib/views/dashboard/widget_registry.dart
++++ b/lib/views/dashboard/widget_registry.dart
+@@ -77,7 +77,7 @@ extension DashboardWidgetView on DashboardWidget {
+     ),
+     DashboardWidget.proxyGroups => const GridItem(
+       key: ValueKey(DashboardWidget.proxyGroups),
+-      crossAxisCellCount: 4,
++      crossAxisCellCount: 8,
+       child: ProxyGroupsCard(),
+     ),
+     DashboardWidget.profiles => const GridItem(
+diff --git a/lib/views/dashboard/widgets/proxy_groups.dart b/lib/views/dashboard/widgets/proxy_groups.dart
+index b72e748..77bd582 100644
+--- a/lib/views/dashboard/widgets/proxy_groups.dart
++++ b/lib/views/dashboard/widgets/proxy_groups.dart
+@@ -23,22 +23,41 @@ class ProxyGroupsCard extends ConsumerWidget {
+   @override
+   Widget build(BuildContext context, WidgetRef ref) {
+     final groups = ref.watch(visibleGroupsStateProvider).value;
++    Future<void> onDelayTest() =>
++        ref.read(proxiesActionProvider.notifier).delayTestGroups(groups);
++    void onSelect(Group group) => showSheet<void>(
++      context: context,
++      builder: (_) => _ProxyGroupSheet(groupName: group.name),
++    );
++    if (groups.length == 1) {
++      return RowCardFrame(
++        lines: 1,
++        child: _GroupLine(
++          group: groups.single,
++          onDelayTest: onDelayTest,
++          onSelect: onSelect,
++        ),
++      );
++    }
+     return RowCardFrame(
+       child: _GroupsPane(
+         groups: groups,
+-        onSelect: (group) => showSheet<void>(
+-          context: context,
+-          builder: (_) => _ProxyGroupSheet(groupName: group.name),
+-        ),
++        onDelayTest: onDelayTest,
++        onSelect: onSelect,
+       ),
+     );
+   }
+ }
+ 
+ class _GroupsPane extends StatefulWidget {
+-  const _GroupsPane({required this.groups, required this.onSelect});
++  const _GroupsPane({
++    required this.groups,
++    required this.onDelayTest,
++    required this.onSelect,
++  });
+ 
+   final List<Group> groups;
++  final Future<void> Function() onDelayTest;
+   final void Function(Group group) onSelect;
+ 
+   @override
+@@ -58,13 +77,29 @@ class _GroupsPaneState extends State<_GroupsPane> {
+   Widget build(BuildContext context) {
+     final groups = widget.groups;
+     final appLocalizations = context.appLocalizations;
++    final padding = DashboardWidgetMetrics.paddingOf(context);
+     return RowCardPane(
+-      header: InfoHeader(
+-        padding: DashboardWidgetMetrics.paddingOf(context).copyWith(bottom: 0),
+-        info: Info(
+-          label: appLocalizations.proxyGroup,
+-          glyph: AppGlyphs.proxies,
+-        ),
++      header: Row(
++        crossAxisAlignment: CrossAxisAlignment.start,
++        children: [
++          Expanded(
++            child: InfoHeader(
++              padding: padding.copyWith(
++                bottom: 0,
++                right: groups.isEmpty ? null : _summaryGap,
++              ),
++              info: Info(
++                label: appLocalizations.proxyGroup,
++                glyph: AppGlyphs.proxies,
++              ),
++            ),
++          ),
++          if (groups.isNotEmpty)
++            Padding(
++              padding: EdgeInsets.only(top: padding.top, right: padding.right),
++              child: _DelayTestButton(onPressed: widget.onDelayTest),
++            ),
++        ],
+       ),
+       body: groups.isEmpty
+           ? RowCardEmpty(
+@@ -102,6 +137,97 @@ class _GroupsPaneState extends State<_GroupsPane> {
+   }
+ }
+ 
++class _GroupLine extends StatelessWidget {
++  const _GroupLine({
++    required this.group,
++    required this.onDelayTest,
++    required this.onSelect,
++  });
++
++  final Group group;
++  final Future<void> Function() onDelayTest;
++  final void Function(Group group) onSelect;
++
++  @override
++  Widget build(BuildContext context) {
++    final pillInset = rowCardPillInsetOf(context);
++    return Padding(
++      padding: EdgeInsets.fromLTRB(
++        DashboardWidgetMetrics.insetOf(context),
++        pillInset,
++        pillInset,
++        pillInset,
++      ),
++      child: Row(
++        crossAxisAlignment: CrossAxisAlignment.stretch,
++        spacing: _summaryGap,
++        children: [
++          Center(
++            child: GlyphIcon(
++              AppGlyphs.proxies,
++              color: context.colorScheme.onSurfaceVariant,
++            ),
++          ),
++          Expanded(
++            child: RowCardPill(
++              onTap: () => onSelect(group),
++              child: _GroupSummary(group: group),
++            ),
++          ),
++          Center(child: _DelayTestButton(onPressed: onDelayTest)),
++        ],
++      ),
++    );
++  }
++}
++
++class _DelayTestButton extends StatefulWidget {
++  const _DelayTestButton({required this.onPressed});
++
++  final Future<void> Function() onPressed;
++
++  @override
++  State<_DelayTestButton> createState() => _DelayTestButtonState();
++}
++
++class _DelayTestButtonState extends State<_DelayTestButton> {
++  var _isLoading = false;
++
++  Future<void> _handlePressed() async {
++    setState(() => _isLoading = true);
++    try {
++      await widget.onPressed();
++    } finally {
++      if (mounted) {
++        setState(() => _isLoading = false);
++      }
++    }
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final iconSize = 16.ap;
++    return SizedBox.square(
++      dimension: globalState.measure.sectionHeaderHeight,
++      child: IconButton(
++        tooltip: context.appLocalizations.delayTest,
++        padding: EdgeInsets.zero,
++        onPressed: _isLoading ? null : _handlePressed,
++        icon: _isLoading
++            ? SizedBox.square(
++                dimension: iconSize,
++                child: const CommonCircleLoading(),
++              )
++            : GlyphIcon(
++                AppGlyphs.bolt,
++                size: iconSize,
++                color: context.colorScheme.onSurfaceVariant,
++              ),
++      ),
++    );
++  }
++}
++
+ class _ProxyGroupSheet extends ConsumerStatefulWidget {
+   const _ProxyGroupSheet({required this.groupName});
+ 
+diff --git a/lib/views/dashboard/widgets/row_card.dart b/lib/views/dashboard/widgets/row_card.dart
+index e17e5ff..59a97a4 100644
+--- a/lib/views/dashboard/widgets/row_card.dart
++++ b/lib/views/dashboard/widgets/row_card.dart
+@@ -11,7 +11,7 @@ const _rowSpacing = 4.0;
+ const _pillInset = 8.0;
+ const _lineRowVerticalPadding = 8.0;
+ 
+-double _pillInsetOf(BuildContext context) {
++double rowCardPillInsetOf(BuildContext context) {
+   return min(_pillInset.mAp, DashboardWidgetMetrics.insetOf(context));
+ }
+ 
+@@ -22,10 +22,11 @@ double rowCardLineExtentOf(BuildContext context) {
+       _lineRowVerticalPadding.mAp * 2;
+ }
+ 
+-/// A two-line dashboard card whose rows, not the card, take the taps.
++/// A dashboard card whose rows, not the card, take the taps.
+ class RowCardFrame extends StatelessWidget {
+-  const RowCardFrame({super.key, required this.child});
++  const RowCardFrame({super.key, this.lines = 2, required this.child});
+ 
++  final int lines;
+   final Widget child;
+ 
+   @override
+@@ -33,7 +34,7 @@ class RowCardFrame extends StatelessWidget {
+     final colorScheme = context.colorScheme;
+     final shape = AppShape.all(DashboardWidgetMetrics.radiusOf(context));
+     return SizedBox(
+-      height: DashboardWidgetMetrics.heightOf(context, 2),
++      height: DashboardWidgetMetrics.heightOf(context, lines),
+       child: Container(
+         clipBehavior: Clip.antiAlias,
+         decoration: ShapeDecoration(
+@@ -84,7 +85,7 @@ class RowCardPane extends StatelessWidget {
+ 
+   @override
+   Widget build(BuildContext context) {
+-    final pillInset = _pillInsetOf(context);
++    final pillInset = rowCardPillInsetOf(context);
+     return Column(
+       children: [
+         header,
+@@ -158,7 +159,7 @@ class RowCardPill extends StatelessWidget {
+   @override
+   Widget build(BuildContext context) {
+     final inset = DashboardWidgetMetrics.insetOf(context);
+-    final pillInset = _pillInsetOf(context);
++    final pillInset = rowCardPillInsetOf(context);
+     final contentInset = inset - pillInset;
+     return LayoutBuilder(
+       builder: (context, constraints) {
+diff --git a/test/views/dashboard/proxy_groups_card_test.dart b/test/views/dashboard/proxy_groups_card_test.dart
+index 819130c..a033af7 100644
+--- a/test/views/dashboard/proxy_groups_card_test.dart
++++ b/test/views/dashboard/proxy_groups_card_test.dart
+@@ -90,6 +90,31 @@ void main() {
+     expect(find.text('No Proxy group yet'), findsOneWidget);
+   });
+ 
++  testWidgets('offers a delay test only once there are groups', (tester) async {
++    await pumpCard(tester);
++    expect(find.byTooltip('Delay test'), findsNothing);
++
++    container.read(groupsProvider.notifier).value = manyGroups();
++    await tester.pump();
++    expect(find.byTooltip('Delay test'), findsOneWidget);
++  });
++
++  testWidgets('a single group takes one line', (tester) async {
++    container.read(groupsProvider.notifier).value = [
++      _group('Auto', ['HK-01']),
++    ];
++    await pumpCard(tester);
++    final single = tester.getSize(find.byType(ProxyGroupsCard)).height;
++
++    container.read(groupsProvider.notifier).value = manyGroups();
++    await tester.pump();
++    final many = tester.getSize(find.byType(ProxyGroupsCard)).height;
++
++    expect(single, 80);
++    expect(many, greaterThan(single));
++    expect(tester.takeException(), isNull);
++  });
++
+   testWidgets('fits more groups as the card grows taller', (tester) async {
+     container.read(groupsProvider.notifier).value = manyGroups();
+ 
+@@ -242,7 +267,12 @@ void main() {
+     ];
+     await pumpCard(tester);
+     return tester
+-        .widgetList<Tooltip>(find.byType(Tooltip))
++        .widgetList<Tooltip>(
++          find.descendant(
++            of: find.byType(RowCardPill),
++            matching: find.byType(Tooltip),
++          ),
++        )
+         .map((tooltip) => tooltip.message);
+   }
+ 
+-- 
+2.55.0.windows.3
+
