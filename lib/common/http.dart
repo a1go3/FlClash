@@ -26,6 +26,9 @@ class FlClashHttpOverrides extends HttpOverrides {
     final mixedPort = read(
       patchClashConfigProvider.select((state) => state.mixedPort),
     );
+    // Port 0 leaves the Core without a local listener; settings shared with
+    // FlClashX can carry it, and TUN still captures direct traffic.
+    if (mixedPort == 0) return 'DIRECT';
     final authentication = read(
       networkSettingProvider.select((state) => state.authentication),
     );

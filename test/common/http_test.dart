@@ -78,6 +78,12 @@ void main() {
     );
   });
 
+  test('goes direct when the mixed port is disabled', () {
+    final container = buildContainer(mixedPort: 0);
+
+    expect(FlClashHttpOverrides.findProxyFor(container, remote), 'DIRECT');
+  });
+
   test('carries credentials when local authentication is enabled', () {
     final container = buildContainer();
     container.read(networkSettingProvider.notifier).value = const NetworkProps()
