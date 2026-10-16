@@ -1,4 +1,4 @@
-From 9dff375fb8aa10029e8afab2f7e8e2f2082fcce4 Mon Sep 17 00:00:00 2001
+From 1b778aac7670c2c4ef2e1be2a92dafeeac27e734 Mon Sep 17 00:00:00 2001
 From: a1go3 <116062404+a1go3@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 23:58:03 +0300
 Subject: [PATCH] feat(dns): resolve through Google and Yandex by default
@@ -7,11 +7,11 @@ A profile without a DNS section resolved through doh.pub and AliDNS, and mihomo 
 
 Changelog: Profiles without their own DNS settings resolve through Google and Yandex instead of Chinese servers
 ---
- lib/common/constant.dart                | 2 +-
- lib/models/clash_config.dart            | 9 ++++++++-
- test/common/task_dns_override_test.dart | 1 +
- test/models/dns_override_test.dart      | 1 +
- 4 files changed, 11 insertions(+), 2 deletions(-)
+ lib/common/constant.dart                |  2 +-
+ lib/models/clash_config.dart            | 10 +++++++++-
+ test/common/task_dns_override_test.dart |  1 +
+ test/models/dns_override_test.dart      |  1 +
+ 4 files changed, 12 insertions(+), 2 deletions(-)
 
 diff --git a/lib/common/constant.dart b/lib/common/constant.dart
 index 401541e2..5904b420 100644
@@ -23,18 +23,19 @@ index 401541e2..5904b420 100644
 +const defaultSystemDnsFallback = '77.88.8.8';
  const double dialogCommonWidth = 300;
 diff --git a/lib/models/clash_config.dart b/lib/models/clash_config.dart
-index 3ef2110f..60beea45 100644
+index 3ef2110f..f9349d4d 100644
 --- a/lib/models/clash_config.dart
 +++ b/lib/models/clash_config.dart
-@@ -24,4 +24,7 @@ const baselineDnsOverrideKeys = {
+@@ -24,4 +24,8 @@ const baselineDnsOverrideKeys = {
    DnsOverrideKey.enhancedMode,
 +  DnsOverrideKey.defaultNameserver,
    DnsOverrideKey.nameserver,
  };
++
 +/// The default nameservers only resolve the DoH hosts; mihomo's own defaults
 +/// for them are Chinese resolvers, slow from where this fork is used.
  const baselineDns = Dns(
-@@ -29,3 +32,7 @@ const baselineDns = Dns(
+@@ -29,3 +33,7 @@ const baselineDns = Dns(
    enhancedMode: DnsMode.fakeIp,
 -  nameserver: ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
 +  defaultNameserver: ['77.88.8.8', '8.8.8.8'],
