@@ -1,14 +1,9 @@
 name: upstream release
 
+# Releases go out by hand once fork changes have piled up; building on every
+# patch change or upstream release ran up enough Actions usage for GitHub to
+# pause the fork's workflows.
 on:
-  schedule:
-    - cron: '17 */6 * * *'
-  push:
-    branches:
-      - utls-pq-fingerprints
-    paths:
-      - .github/fork/**
-      - .github/workflows/upstream-release.yaml
   workflow_dispatch:
     inputs:
       tag:
@@ -17,7 +12,7 @@ on:
       force:
         description: Rebuild even if this fork already has the release
         type: boolean
-        default: false
+        default: true
 
 concurrency:
   group: upstream-release
@@ -38,7 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_TAG: ${{ inputs.tag }}
-          FORCE: ${{ inputs.force || github.event_name == 'push' }}
+          FORCE: ${{ inputs.force }}
         run: |
           tag="${INPUT_TAG:-$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -62,9 +57,7 @@ jobs:
           - platform: windows
             os: windows-2022
             arch: amd64
-          - platform: macos
-            os: macos-latest
-            arch: arm64
+          # The Intel build also runs on Apple silicon through Rosetta.
           - platform: macos
             os: macos-15-intel
             arch: amd64
@@ -163,6 +156,7 @@ jobs:
           TAG: ${{ needs.check.outputs.tag }}
         run: |
           release="pq-${TAG#v}"
+          find dist -type f ! -name '*-setup.exe' ! -name '*.dmg' -delete
           (cd dist && sha256sum ./* > SHA256SUMS)
           {
             echo "Upstream $UPSTREAM $TAG with this fork's changes: a REALITY ClientHello split over several TLS records, safari and firefox client fingerprints with a post-quantum (X25519MLKEM768) key share, a one-line dashboard proxy groups card with a delay test button, a macOS menu bar icon that opens the window below it on a left click, the app's own requests going direct when the mixed port is disabled, XHTTP connection reuse by default, Google and Yandex DNS by default, and update checks against this fork. Unsigned build."

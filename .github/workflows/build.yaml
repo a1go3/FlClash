@@ -1,9 +1,9 @@
 name: build
 
+# This fork runs the checks by hand: the full matrix on every push to every
+# branch is what got the fork's workflows paused by GitHub.
 on:
   push:
-    branches:
-      - '**'
     tags:
       - 'v*'
   workflow_dispatch:
