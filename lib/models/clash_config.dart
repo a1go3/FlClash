@@ -25,6 +25,7 @@ const baselineDnsOverrideKeys = {
   DnsOverrideKey.defaultNameserver,
   DnsOverrideKey.nameserver,
 };
+
 /// The default nameservers only resolve the DoH hosts; mihomo's own defaults
 /// for them are Chinese resolvers, slow from where this fork is used.
 const baselineDns = Dns(
