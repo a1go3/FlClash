@@ -1,0 +1,514 @@
+From 14046e10fb9216133a2c1784619be2b6e9bda0e7 Mon Sep 17 00:00:00 2001
+From: a1go3 <116062404+a1go3@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 00:12:11 +0300
+Subject: [PATCH] feat(tls): split the ClientHello over several TLS records
+
+Provider filters freeze a server port after reading a whole ClientHello from the first TLS record, while a hello spread over records passes and servers reassemble it. VLESS gains a tls-fragment option (enable, packets: tlshello, length, interval in ms, ranges allowed) that re-frames only the first handshake record, leaving the handshake bytes, the transcript and the REALITY session ID as they are. REALITY profiles split by default with Xray's values, 100-200 bytes a record written 1 ms apart, since subscriptions carry no fragment settings; tls-fragment with enable: false turns it off.
+---
+ adapter/outbound/vless.go      |  92 +++++++++++------
+ component/tls/fragment.go      | 176 +++++++++++++++++++++++++++++++++
+ component/tls/fragment_test.go | 138 ++++++++++++++++++++++++++
+ listener/inbound/vless_test.go |  14 +++
+ transport/vmess/tls.go         |   5 +
+ 5 files changed, 394 insertions(+), 31 deletions(-)
+ create mode 100644 component/tls/fragment.go
+ create mode 100644 component/tls/fragment_test.go
+
+diff --git a/adapter/outbound/vless.go b/adapter/outbound/vless.go
+index 3ca92e9..e77b322 100644
+--- a/adapter/outbound/vless.go
++++ b/adapter/outbound/vless.go
+@@ -53,41 +53,66 @@ type Vless struct {
+ 	restlsConfig    *restls.Config
+ 	jlsConfig       *jls.Config
+ 	realityConfig   *tlsC.RealityConfig
++	fragmentConfig  *tlsC.FragmentConfig
+ }
+ 
+ type VlessOption struct {
+ 	BasicOption
+-	Name              string            `proxy:"name"`
+-	Server            string            `proxy:"server"`
+-	Port              int               `proxy:"port"`
+-	UUID              string            `proxy:"uuid"`
+-	Flow              string            `proxy:"flow,omitempty"`
+-	TLS               bool              `proxy:"tls,omitempty"`
+-	ALPN              []string          `proxy:"alpn,omitempty"`
+-	UDP               bool              `proxy:"udp,omitempty"`
+-	PacketAddr        bool              `proxy:"packet-addr,omitempty"`
+-	XUDP              bool              `proxy:"xudp,omitempty"`
+-	PacketEncoding    string            `proxy:"packet-encoding,omitempty"`
+-	Encryption        string            `proxy:"encryption,omitempty"`
+-	Network           string            `proxy:"network,omitempty"`
+-	ECHOpts           ECHOptions        `proxy:"ech-opts,omitempty"`
+-	ShadowTLSOpts     ShadowTLSOptions  `proxy:"shadow-tls-opts,omitempty"`
+-	RestlsOpts        RestlsOptions     `proxy:"restls-opts,omitempty"`
+-	JLSOpts           JLSOptions        `proxy:"jls-opts,omitempty"`
+-	RealityOpts       RealityOptions    `proxy:"reality-opts,omitempty"`
+-	HTTPOpts          HTTPOptions       `proxy:"http-opts,omitempty"`
+-	HTTP2Opts         HTTP2Options      `proxy:"h2-opts,omitempty"`
+-	GrpcOpts          GrpcOptions       `proxy:"grpc-opts,omitempty"`
+-	WSOpts            WSOptions         `proxy:"ws-opts,omitempty"`
+-	XHTTPOpts         XHTTPOptions      `proxy:"xhttp-opts,omitempty"`
+-	WSHeaders         map[string]string `proxy:"ws-headers,omitempty"`
+-	SkipCertVerify    bool              `proxy:"skip-cert-verify,omitempty"`
+-	NameCertVerify    string            `proxy:"name-cert-verify,omitempty"`
+-	Fingerprint       string            `proxy:"fingerprint,omitempty"`
+-	Certificate       string            `proxy:"certificate,omitempty"`
+-	PrivateKey        string            `proxy:"private-key,omitempty"`
+-	ServerName        string            `proxy:"servername,omitempty"`
+-	ClientFingerprint string            `proxy:"client-fingerprint,omitempty"`
++	Name              string              `proxy:"name"`
++	Server            string              `proxy:"server"`
++	Port              int                 `proxy:"port"`
++	UUID              string              `proxy:"uuid"`
++	Flow              string              `proxy:"flow,omitempty"`
++	TLS               bool                `proxy:"tls,omitempty"`
++	ALPN              []string            `proxy:"alpn,omitempty"`
++	UDP               bool                `proxy:"udp,omitempty"`
++	PacketAddr        bool                `proxy:"packet-addr,omitempty"`
++	XUDP              bool                `proxy:"xudp,omitempty"`
++	PacketEncoding    string              `proxy:"packet-encoding,omitempty"`
++	Encryption        string              `proxy:"encryption,omitempty"`
++	Network           string              `proxy:"network,omitempty"`
++	ECHOpts           ECHOptions          `proxy:"ech-opts,omitempty"`
++	ShadowTLSOpts     ShadowTLSOptions    `proxy:"shadow-tls-opts,omitempty"`
++	RestlsOpts        RestlsOptions       `proxy:"restls-opts,omitempty"`
++	JLSOpts           JLSOptions          `proxy:"jls-opts,omitempty"`
++	RealityOpts       RealityOptions      `proxy:"reality-opts,omitempty"`
++	HTTPOpts          HTTPOptions         `proxy:"http-opts,omitempty"`
++	HTTP2Opts         HTTP2Options        `proxy:"h2-opts,omitempty"`
++	GrpcOpts          GrpcOptions         `proxy:"grpc-opts,omitempty"`
++	WSOpts            WSOptions           `proxy:"ws-opts,omitempty"`
++	XHTTPOpts         XHTTPOptions        `proxy:"xhttp-opts,omitempty"`
++	WSHeaders         map[string]string   `proxy:"ws-headers,omitempty"`
++	SkipCertVerify    bool                `proxy:"skip-cert-verify,omitempty"`
++	NameCertVerify    string              `proxy:"name-cert-verify,omitempty"`
++	Fingerprint       string              `proxy:"fingerprint,omitempty"`
++	Certificate       string              `proxy:"certificate,omitempty"`
++	PrivateKey        string              `proxy:"private-key,omitempty"`
++	ServerName        string              `proxy:"servername,omitempty"`
++	ClientFingerprint string              `proxy:"client-fingerprint,omitempty"`
++	TLSFragment       *TLSFragmentOptions `proxy:"tls-fragment,omitempty"`
++}
++
++type TLSFragmentOptions struct {
++	Enable   *bool  `proxy:"enable,omitempty"`
++	Packets  string `proxy:"packets,omitempty"`
++	Length   string `proxy:"length,omitempty"`
++	Interval string `proxy:"interval,omitempty"`
++}
++
++// REALITY profiles split the ClientHello unless they say otherwise: provider
++// filters freeze a server port on a whole hello in the first record, and
++// subscriptions carry no fragment settings.
++func (o *TLSFragmentOptions) Parse(isReality bool) (*tlsC.FragmentConfig, error) {
++	if o == nil {
++		if !isReality {
++			return nil, nil
++		}
++		return tlsC.ParseFragmentConfig("", "", "")
++	}
++	if o.Enable != nil && !*o.Enable {
++		return nil, nil
++	}
++	return tlsC.ParseFragmentConfig(o.Packets, o.Length, o.Interval)
+ }
+ 
+ type XHTTPOptions struct {
+@@ -328,6 +353,7 @@ func (v *Vless) streamTLSConn(ctx context.Context, conn net.Conn, isH2 bool) (ne
+ 			Restls:            v.restlsConfig,
+ 			JLS:               v.jlsConfig,
+ 			Reality:           v.realityConfig,
++			Fragment:          v.fragmentConfig,
+ 			NextProtos:        v.option.ALPN,
+ 		}
+ 
+@@ -541,6 +567,10 @@ func NewVless(option VlessOption) (*Vless, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	v.fragmentConfig, err = option.TLSFragment.Parse(v.realityConfig != nil)
++	if err != nil {
++		return nil, err
++	}
+ 	securityModes := make([]string, 0, 4)
+ 	if v.shadowTLSConfig != nil {
+ 		securityModes = append(securityModes, "ShadowTLS")
+diff --git a/component/tls/fragment.go b/component/tls/fragment.go
+new file mode 100644
+index 0000000..e908a6c
+--- /dev/null
++++ b/component/tls/fragment.go
+@@ -0,0 +1,176 @@
++package tls
++
++import (
++	"encoding/binary"
++	"fmt"
++	"net"
++	"strconv"
++	"strings"
++	"sync/atomic"
++	"time"
++
++	"github.com/metacubex/mihomo/common/buf"
++	N "github.com/metacubex/mihomo/common/net"
++
++	"github.com/metacubex/randv2"
++)
++
++const (
++	recordTypeHandshake = 0x16
++	recordHeaderLen     = 5
++)
++
++// FragmentConfig spreads the first handshake record a client writes, the
++// ClientHello, over several TLS records. A filter that classifies a connection
++// by its first record no longer sees a whole hello, while servers reassemble
++// handshake messages across records as RFC 8446 section 5.1 requires.
++type FragmentConfig struct {
++	MinLength int
++	MaxLength int
++	// Zero hands every record to one Write; otherwise each record is written
++	// on its own, this far apart.
++	MinInterval time.Duration
++	MaxInterval time.Duration
++}
++
++func ParseFragmentConfig(packets, length, interval string) (*FragmentConfig, error) {
++	if packets != "" && packets != "tlshello" {
++		return nil, fmt.Errorf("tls-fragment: unsupported packets %q, only tlshello", packets)
++	}
++	minLength, maxLength, err := parseFragmentRange(length, "100-200")
++	if err != nil {
++		return nil, fmt.Errorf("tls-fragment: length: %w", err)
++	}
++	if minLength < 1 || maxLength > 1<<14 {
++		return nil, fmt.Errorf("tls-fragment: length %q is outside 1-16384", length)
++	}
++	minInterval, maxInterval, err := parseFragmentRange(interval, "1")
++	if err != nil {
++		return nil, fmt.Errorf("tls-fragment: interval: %w", err)
++	}
++	return &FragmentConfig{
++		MinLength:   minLength,
++		MaxLength:   maxLength,
++		MinInterval: time.Duration(minInterval) * time.Millisecond,
++		MaxInterval: time.Duration(maxInterval) * time.Millisecond,
++	}, nil
++}
++
++func parseFragmentRange(value, fallback string) (int, int, error) {
++	value = strings.TrimSpace(value)
++	if value == "" {
++		value = fallback
++	}
++	low, high, isRange := strings.Cut(value, "-")
++	minValue, err := strconv.Atoi(strings.TrimSpace(low))
++	if err != nil {
++		return 0, 0, err
++	}
++	maxValue := minValue
++	if isRange {
++		maxValue, err = strconv.Atoi(strings.TrimSpace(high))
++		if err != nil {
++			return 0, 0, err
++		}
++	}
++	if minValue < 0 || maxValue < minValue {
++		return 0, 0, fmt.Errorf("invalid range %q", value)
++	}
++	return minValue, maxValue, nil
++}
++
++func randomIn(minValue, maxValue int) int {
++	return minValue + randv2.IntN(maxValue-minValue+1)
++}
++
++type fragmentConn struct {
++	N.ExtendedConn
++	config  *FragmentConfig
++	written atomic.Bool
++}
++
++func NewFragmentConn(conn net.Conn, config *FragmentConfig) net.Conn {
++	return &fragmentConn{ExtendedConn: N.NewExtendedConn(conn), config: config}
++}
++
++func (c *fragmentConn) Write(b []byte) (int, error) {
++	if c.written.Swap(true) {
++		return c.ExtendedConn.Write(b)
++	}
++	records, rest, ok := splitHandshakeRecord(b, c.config.MinLength, c.config.MaxLength)
++	if !ok {
++		return c.ExtendedConn.Write(b)
++	}
++	if c.config.MaxInterval <= 0 {
++		joined := make([]byte, 0, len(b)+len(records)*recordHeaderLen)
++		for _, record := range records {
++			joined = append(joined, record...)
++		}
++		if _, err := c.ExtendedConn.Write(append(joined, rest...)); err != nil {
++			return 0, err
++		}
++		return len(b), nil
++	}
++	for i, record := range records {
++		if i > 0 {
++			time.Sleep(time.Duration(randomIn(int(c.config.MinInterval), int(c.config.MaxInterval))))
++		}
++		if _, err := c.ExtendedConn.Write(record); err != nil {
++			return 0, err
++		}
++	}
++	if len(rest) > 0 {
++		if _, err := c.ExtendedConn.Write(rest); err != nil {
++			return 0, err
++		}
++	}
++	return len(b), nil
++}
++
++func (c *fragmentConn) WriteBuffer(buffer *buf.Buffer) error {
++	if c.written.Load() {
++		return c.ExtendedConn.WriteBuffer(buffer)
++	}
++	defer buffer.Release()
++	_, err := c.Write(buffer.Bytes())
++	return err
++}
++
++func (c *fragmentConn) Upstream() any {
++	return c.ExtendedConn
++}
++
++func (c *fragmentConn) ReaderReplaceable() bool {
++	return true
++}
++
++func (c *fragmentConn) WriterReplaceable() bool {
++	return c.written.Load()
++}
++
++// splitHandshakeRecord re-frames the handshake record at the start of b; the
++// handshake bytes stay as they are, so the transcript hash and the REALITY
++// session ID sealed over the hello are unaffected.
++func splitHandshakeRecord(b []byte, minLength, maxLength int) (records [][]byte, rest []byte, ok bool) {
++	if len(b) < recordHeaderLen || b[0] != recordTypeHandshake {
++		return nil, nil, false
++	}
++	bodyLen := int(binary.BigEndian.Uint16(b[3:recordHeaderLen]))
++	if len(b) < recordHeaderLen+bodyLen {
++		return nil, nil, false
++	}
++	body := b[recordHeaderLen : recordHeaderLen+bodyLen]
++	for len(body) > 0 {
++		size := randomIn(minLength, maxLength)
++		if size > len(body) {
++			size = len(body)
++		}
++		record := make([]byte, recordHeaderLen+size)
++		copy(record, b[:3])
++		binary.BigEndian.PutUint16(record[3:recordHeaderLen], uint16(size))
++		copy(record[recordHeaderLen:], body[:size])
++		records = append(records, record)
++		body = body[size:]
++	}
++	return records, b[recordHeaderLen+bodyLen:], true
++}
+diff --git a/component/tls/fragment_test.go b/component/tls/fragment_test.go
+new file mode 100644
+index 0000000..fc3fc91
+--- /dev/null
++++ b/component/tls/fragment_test.go
+@@ -0,0 +1,138 @@
++package tls
++
++import (
++	"bytes"
++	"encoding/binary"
++	"net"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++type recordingConn struct {
++	net.Conn
++	writes [][]byte
++}
++
++func (c *recordingConn) Write(b []byte) (int, error) {
++	c.writes = append(c.writes, append([]byte(nil), b...))
++	return len(b), nil
++}
++
++func clientHelloRecord(bodyLen int) []byte {
++	record := make([]byte, recordHeaderLen+bodyLen)
++	record[0] = recordTypeHandshake
++	record[1], record[2] = 0x03, 0x01
++	binary.BigEndian.PutUint16(record[3:recordHeaderLen], uint16(bodyLen))
++	for i := range record[recordHeaderLen:] {
++		record[recordHeaderLen+i] = byte(i)
++	}
++	return record
++}
++
++func parseRecords(t *testing.T, stream []byte) (lengths []int, body []byte) {
++	for len(stream) > 0 {
++		require.GreaterOrEqual(t, len(stream), recordHeaderLen)
++		assert.Equal(t, []byte{recordTypeHandshake, 0x03, 0x01}, stream[:3])
++		size := int(binary.BigEndian.Uint16(stream[3:recordHeaderLen]))
++		lengths = append(lengths, size)
++		body = append(body, stream[recordHeaderLen:recordHeaderLen+size]...)
++		stream = stream[recordHeaderLen+size:]
++	}
++	return lengths, body
++}
++
++func TestFragmentSplitsTheClientHelloIntoRecordsInRange(t *testing.T) {
++	inner := &recordingConn{}
++	conn := NewFragmentConn(inner, &FragmentConfig{MinLength: 100, MaxLength: 200})
++	hello := clientHelloRecord(1531)
++
++	n, err := conn.Write(hello)
++	require.NoError(t, err)
++	assert.Equal(t, len(hello), n)
++	require.Len(t, inner.writes, 1)
++
++	lengths, body := parseRecords(t, inner.writes[0])
++	assert.Equal(t, hello[recordHeaderLen:], body)
++	assert.GreaterOrEqual(t, len(lengths), 8)
++	for _, size := range lengths[:len(lengths)-1] {
++		assert.GreaterOrEqual(t, size, 100)
++		assert.LessOrEqual(t, size, 200)
++	}
++}
++
++func TestFragmentWritesEachRecordApartWithAnInterval(t *testing.T) {
++	inner := &recordingConn{}
++	conn := NewFragmentConn(inner, &FragmentConfig{
++		MinLength:   150,
++		MaxLength:   150,
++		MinInterval: time.Millisecond,
++		MaxInterval: time.Millisecond,
++	})
++	hello := clientHelloRecord(400)
++
++	_, err := conn.Write(append(hello, 0x14, 0x03, 0x03))
++	require.NoError(t, err)
++
++	require.Len(t, inner.writes, 4)
++	lengths, _ := parseRecords(t, bytes.Join(inner.writes[:3], nil))
++	assert.Equal(t, []int{150, 150, 100}, lengths)
++	assert.Equal(t, []byte{0x14, 0x03, 0x03}, inner.writes[3])
++}
++
++func TestFragmentLeavesLaterWritesAlone(t *testing.T) {
++	inner := &recordingConn{}
++	conn := NewFragmentConn(inner, &FragmentConfig{MinLength: 100, MaxLength: 200})
++	_, err := conn.Write(clientHelloRecord(300))
++	require.NoError(t, err)
++
++	second := clientHelloRecord(300)
++	_, err = conn.Write(second)
++	require.NoError(t, err)
++
++	assert.Equal(t, second, inner.writes[len(inner.writes)-1])
++}
++
++func TestFragmentLeavesAFirstWriteThatIsNoWholeHandshakeAlone(t *testing.T) {
++	for name, first := range map[string][]byte{
++		"application data": {0x17, 0x03, 0x03, 0x00, 0x01, 0x00},
++		"truncated record": clientHelloRecord(300)[:200],
++	} {
++		t.Run(name, func(t *testing.T) {
++			inner := &recordingConn{}
++			conn := NewFragmentConn(inner, &FragmentConfig{MinLength: 100, MaxLength: 200})
++
++			_, err := conn.Write(first)
++			require.NoError(t, err)
++
++			assert.Equal(t, [][]byte{first}, inner.writes)
++		})
++	}
++}
++
++func TestParseFragmentConfig(t *testing.T) {
++	config, err := ParseFragmentConfig("", "", "")
++	require.NoError(t, err)
++	assert.Equal(t, &FragmentConfig{
++		MinLength:   100,
++		MaxLength:   200,
++		MinInterval: time.Millisecond,
++		MaxInterval: time.Millisecond,
++	}, config)
++
++	config, err = ParseFragmentConfig("tlshello", "50-80", "0")
++	require.NoError(t, err)
++	assert.Equal(t, &FragmentConfig{MinLength: 50, MaxLength: 80}, config)
++
++	for _, args := range [][3]string{
++		{"1-3", "", ""},
++		{"", "200-100", ""},
++		{"", "0", ""},
++		{"", "", "fast"},
++	} {
++		_, err := ParseFragmentConfig(args[0], args[1], args[2])
++		assert.Error(t, err, args)
++	}
++}
+diff --git a/listener/inbound/vless_test.go b/listener/inbound/vless_test.go
+index d83df33..80a7b46 100644
+--- a/listener/inbound/vless_test.go
++++ b/listener/inbound/vless_test.go
+@@ -381,6 +381,20 @@ func TestInboundVless_Reality(t *testing.T) {
+ 			testInboundVless(t, inboundOptions, outboundOptions)
+ 		})
+ 	})
++	t.Run("tls-fragment written record by record", func(t *testing.T) {
++		outboundOptions := outboundOptions
++		outboundOptions.ClientFingerprint = "safari"
++		outboundOptions.Flow = "xtls-rprx-vision"
++		outboundOptions.RealityOpts.SupportX25519MLKEM768 = true
++		outboundOptions.TLSFragment = &outbound.TLSFragmentOptions{Length: "20-40", Interval: "1"}
++		testInboundVless(t, inboundOptions, outboundOptions)
++	})
++	t.Run("tls-fragment off", func(t *testing.T) {
++		disabled := false
++		outboundOptions := outboundOptions
++		outboundOptions.TLSFragment = &outbound.TLSFragmentOptions{Enable: &disabled}
++		testInboundVless(t, inboundOptions, outboundOptions)
++	})
+ }
+ 
+ func TestInboundVless_Reality_Grpc(t *testing.T) {
+diff --git a/transport/vmess/tls.go b/transport/vmess/tls.go
+index 6bede7f..fdb7e94 100644
+--- a/transport/vmess/tls.go
++++ b/transport/vmess/tls.go
+@@ -30,6 +30,7 @@ type TLSConfig struct {
+ 	Restls            *restls.Config
+ 	JLS               *jls.Config
+ 	Reality           *tlsC.RealityConfig
++	Fragment          *tlsC.FragmentConfig
+ 	TLSMirror         *tlsmirror.Config
+ 	TLSMirrorDialer   tlsmirror.EnrollmentDialer
+ }
+@@ -106,6 +107,10 @@ func StreamTLSConn(ctx context.Context, conn net.Conn, cfg *TLSConfig) (net.Conn
+ 		})
+ 	}
+ 
++	if cfg.Fragment != nil {
++		conn = tlsC.NewFragmentConn(conn, cfg.Fragment)
++	}
++
+ 	tlsConfig, err := cfg.ToStdConfig()
+ 	if err != nil {
+ 		return nil, err
+-- 
+2.55.0
+
