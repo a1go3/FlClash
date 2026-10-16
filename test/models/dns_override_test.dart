@@ -185,6 +185,7 @@ void main() {
       expect(baselineDns.overrideJson(baselineDnsOverrideKeys), {
         'enable': true,
         'enhanced-mode': 'fake-ip',
+        'default-nameserver': baselineDns.defaultNameserver,
         'nameserver': baselineDns.nameserver,
       });
     });

@@ -22,12 +22,19 @@ const defaultProfileTun = ProfileTun();
 const baselineDnsOverrideKeys = {
   DnsOverrideKey.enable,
   DnsOverrideKey.enhancedMode,
+  DnsOverrideKey.defaultNameserver,
   DnsOverrideKey.nameserver,
 };
+/// The default nameservers only resolve the DoH hosts; mihomo's own defaults
+/// for them are Chinese resolvers, slow from where this fork is used.
 const baselineDns = Dns(
   enable: true,
   enhancedMode: DnsMode.fakeIp,
-  nameserver: ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
+  defaultNameserver: ['77.88.8.8', '8.8.8.8'],
+  nameserver: [
+    'https://dns.google/dns-query',
+    'https://common.dot.dns.yandex.net/dns-query',
+  ],
 );
 const defaultGeoXUrl = {
   GeoResource.MMDB:
