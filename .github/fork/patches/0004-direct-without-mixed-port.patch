@@ -1,0 +1,48 @@
+From 619303941c2a462ac89bd43712b53ab5ab15ffb6 Mon Sep 17 00:00:00 2001
+From: a1go3 <116062404+a1go3@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 23:54:43 +0300
+Subject: [PATCH] fix(network): send the app's own requests direct when the
+ mixed port is disabled
+
+A mixed port of 0 leaves the Core without a local listener, yet update checks and downloads were still pointed at localhost:0 and failed with a connection error. Settings shared with FlClashX can carry that value even though the port dialog refuses it; with TUN on, direct traffic is still captured.
+
+Changelog: Update checks and downloads work when the mixed port is disabled
+---
+ lib/common/http.dart       | 3 +++
+ test/common/http_test.dart | 6 ++++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/lib/common/http.dart b/lib/common/http.dart
+index 74f0616c..3348bed2 100644
+--- a/lib/common/http.dart
++++ b/lib/common/http.dart
+@@ -26,6 +26,9 @@ class FlClashHttpOverrides extends HttpOverrides {
+     final mixedPort = read(
+       patchClashConfigProvider.select((state) => state.mixedPort),
+     );
++    // Port 0 leaves the Core without a local listener; settings shared with
++    // FlClashX can carry it, and TUN still captures direct traffic.
++    if (mixedPort == 0) return 'DIRECT';
+     final authentication = read(
+       networkSettingProvider.select((state) => state.authentication),
+     );
+diff --git a/test/common/http_test.dart b/test/common/http_test.dart
+index d4cec73d..2129a55a 100644
+--- a/test/common/http_test.dart
++++ b/test/common/http_test.dart
+@@ -78,6 +78,12 @@ void main() {
+     );
+   });
+ 
++  test('goes direct when the mixed port is disabled', () {
++    final container = buildContainer(mixedPort: 0);
++
++    expect(FlClashHttpOverrides.findProxyFor(container, remote), 'DIRECT');
++  });
++
+   test('carries credentials when local authentication is enabled', () {
+     final container = buildContainer();
+     container.read(networkSettingProvider.notifier).value = const NetworkProps()
+-- 
+2.55.0
+
