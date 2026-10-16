@@ -21,6 +21,11 @@ fingerprint_test=TestBrowserFingerprintsOfferPostQuantumKeyShare
   CGO_ENABLED=0 go test -count=1 -run "$fingerprint_test" -v .
 )
 
+for patch in "$fork"/.github/fork/core-patches/*.patch; do
+  echo "Applying core $(basename "$patch")"
+  git -C core/Clash.Meta apply --whitespace=nowarn "$patch"
+done
+
 for patch in "$fork"/.github/fork/patches/*.patch; do
   echo "Applying $(basename "$patch")"
   git apply --whitespace=nowarn "$patch"

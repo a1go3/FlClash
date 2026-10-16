@@ -1,0 +1,61 @@
+From 7d6726e464fb4ed41d5c092a10efb04217f2b84d Mon Sep 17 00:00:00 2001
+From: a1go3 <116062404+a1go3@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 23:57:44 +0300
+Subject: [PATCH] feat(xhttp): reuse connections by default like Xray's XMUX
+
+An XHTTP outbound without reuse-settings opened a new TCP and TLS session for every proxied connection, about 25 a minute for one device, where Xray clients open a few. With no reuse-settings the outbound now takes Xray's XMUX defaults: 16 to 32 streams per connection, 600 to 900 requests and 1800 to 3000 seconds before a connection retires.
+---
+ adapter/outbound/vless.go | 29 +++++++++++++++++++----------
+ 1 file changed, 19 insertions(+), 10 deletions(-)
+
+diff --git a/adapter/outbound/vless.go b/adapter/outbound/vless.go
+index 1e5b168..3ca92e9 100644
+--- a/adapter/outbound/vless.go
++++ b/adapter/outbound/vless.go
+@@ -127,6 +127,14 @@ type XHTTPReuseSettings struct {
+ 	HKeepAlivePeriod int    `proxy:"h-keep-alive-period,omitempty"`
+ }
+ 
++// Xray's XMUX defaults for an XHTTP outbound that sets none; without reuse
++// every proxied connection opens its own TCP and TLS session to the server.
++var defaultXHTTPReuseSettings = XHTTPReuseSettings{
++	MaxConcurrency:   "16-32",
++	HMaxRequestTimes: "600-900",
++	HMaxReusableSecs: "1800-3000",
++}
++
+ type XHTTPDownloadSettings struct {
+ 	// xhttp part
+ 	Path          *string             `proxy:"path,omitempty"`
+@@ -626,17 +634,18 @@ func NewVless(option VlessOption) (*Vless, error) {
+ 
+ 		var hKeepAlivePeriod time.Duration
+ 
+-		var reuseCfg *xhttp.ReuseConfig
+-		if option.XHTTPOpts.ReuseSettings != nil {
+-			reuseCfg = &xhttp.ReuseConfig{
+-				MaxConcurrency:   option.XHTTPOpts.ReuseSettings.MaxConcurrency,
+-				MaxConnections:   option.XHTTPOpts.ReuseSettings.MaxConnections,
+-				CMaxReuseTimes:   option.XHTTPOpts.ReuseSettings.CMaxReuseTimes,
+-				HMaxRequestTimes: option.XHTTPOpts.ReuseSettings.HMaxRequestTimes,
+-				HMaxReusableSecs: option.XHTTPOpts.ReuseSettings.HMaxReusableSecs,
+-			}
+-			hKeepAlivePeriod = time.Duration(option.XHTTPOpts.ReuseSettings.HKeepAlivePeriod) * time.Second
++		reuseSettings := option.XHTTPOpts.ReuseSettings
++		if reuseSettings == nil {
++			reuseSettings = &defaultXHTTPReuseSettings
++		}
++		reuseCfg := &xhttp.ReuseConfig{
++			MaxConcurrency:   reuseSettings.MaxConcurrency,
++			MaxConnections:   reuseSettings.MaxConnections,
++			CMaxReuseTimes:   reuseSettings.CMaxReuseTimes,
++			HMaxRequestTimes: reuseSettings.HMaxRequestTimes,
++			HMaxReusableSecs: reuseSettings.HMaxReusableSecs,
+ 		}
++		hKeepAlivePeriod = time.Duration(reuseSettings.HKeepAlivePeriod) * time.Second
+ 
+ 		cfg := &xhttp.Config{
+ 			Host:                 requestHost,
+-- 
+2.55.0
+
