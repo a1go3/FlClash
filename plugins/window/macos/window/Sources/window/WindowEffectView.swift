@@ -54,26 +54,39 @@ enum WindowEffectView {
         }
     }
 
-    static func install(in window: NSWindow) {
+    private static func install(in window: NSWindow) -> EffectHostViewController? {
+        if let host = window.contentViewController as? EffectHostViewController {
+            return host
+        }
         guard let flutterViewController = window.contentViewController as? FlutterViewController else {
-            return
+            return nil
         }
         let frame = window.frame
-        window.contentViewController = EffectHostViewController(hosting: flutterViewController)
+        let host = EffectHostViewController(hosting: flutterViewController)
+        window.contentViewController = host
         window.setFrame(frame, display: true)
+        return host
     }
 
     static func apply(_ effect: WindowEffect, tint: NSColor?, appearance: NSAppearance?, to window: NSWindow) {
-        guard let host = window.contentViewController as? EffectHostViewController else {
-            return
-        }
-        let effectView = host.effectView
         switch effect {
         case .none, .transparent, .mica:
-            effectView.maskImage = NSImage()
-            effectView.state = .inactive
+            // The host goes in only once a material is asked for: macOS 12 leaves
+            // the window blank while the Flutter view sits in a masked effect
+            // view, so a window that never blurs keeps the plain hierarchy.
+            guard let host = window.contentViewController as? EffectHostViewController else {
+                (window.contentViewController as? FlutterViewController)?.backgroundColor =
+                    effect == .none ? .windowBackgroundColor : .clear
+                return
+            }
+            host.effectView.maskImage = NSImage()
+            host.effectView.state = .inactive
             host.flutterViewController.backgroundColor = effect == .none ? .windowBackgroundColor : .clear
         case .blur, .acrylic:
+            guard let host = install(in: window) else {
+                return
+            }
+            let effectView = host.effectView
             effectView.maskImage = nil
             effectView.material = effect == .blur ? .sidebar : .fullScreenUI
             effectView.state = .followsWindowActiveState

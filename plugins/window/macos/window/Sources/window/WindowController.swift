@@ -23,7 +23,6 @@ final class WindowController: NSObject, NSWindowDelegate {
         previousDelegate = window.delegate
         window.delegate = self
         wasZoomed = window.isZoomed
-        WindowEffectView.install(in: window)
         // App deactivation rather than resignKey, so the app's own open and
         // save panels do not dismiss the attached window.
         resignActiveObserver = resignActiveObserver ?? NotificationCenter.default.addObserver(

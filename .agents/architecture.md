@@ -1276,8 +1276,9 @@ table. `lib/common/window.dart` and `lib/manager/window_manager.dart` are the on
 - Sidebar blur is soft-disabled: `feature.sidebarBlur` (`lib/common/feature.dart`) is off unless the build passes
   `--dart-define=FEATURE_SIDEBAR_BLUR=true`. While it is off the theme page hides the toggle and
   `windowBlurRequestProvider` asks for no effect whatever `ThemeProps.sidebarBlur` holds. `WindowManager` still sends
-  that request at startup: the macOS plugin installs its effect view in `ensureInitialized` and leaves it active until
-  the first `setEffect`, so the `none` request is what makes the window opaque and parks the effect view.
+  that request at startup, which makes the window opaque. The macOS plugin installs its effect view only on the first
+  `blur` or `acrylic`, so with the toggle off the Flutter view stays the window's content view; macOS 12 shows a blank
+  window when it is hosted in the masked effect view.
 
 ## rust_api Crate Layout
 

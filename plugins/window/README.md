@@ -135,14 +135,17 @@ The Flutter content must paint a translucent background for anything but
 `none` to be visible.
 
 On macOS the plugin follows macos_window_utils, which flutter_acrylic uses:
-`ensureInitialized` installs a host view controller whose view is the
-`NSVisualEffectView` and hosts the Flutter view controller as a child, so the
-effect view is the Flutter view's superview for the life of the window.
-Placing the effect view beneath the Flutter view as a sibling breaks input:
-AppKit hands an unhandled `mouseDown` from a non-opaque view to the sibling
-below it before the view controller, so Flutter never receives clicks. `none`
-and `transparent` mask the material out with an empty `maskImage` and leave
-the view inactive instead of swapping view controllers.
+the first `blur` or `acrylic` installs a host view controller whose view is the
+`NSVisualEffectView` and hosts the Flutter view controller as a child, so from
+then on the effect view is the Flutter view's superview for the life of the
+window. Placing the effect view beneath the Flutter view as a sibling breaks
+input: AppKit hands an unhandled `mouseDown` from a non-opaque view to the
+sibling below it before the view controller, so Flutter never receives clicks.
+Once installed, `none` and `transparent` mask the material out with an empty
+`maskImage` and leave the view inactive instead of swapping view controllers.
+Until then they only set the Flutter view controller's background: macOS 12
+leaves the window blank while the Flutter view sits in the masked effect view,
+so a window that never blurs keeps the plain hierarchy.
 
 ## Lifecycle
 
