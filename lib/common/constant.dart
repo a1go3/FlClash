@@ -73,6 +73,7 @@ const delayTestTimeoutDuration = Duration(seconds: 8);
 const delayTestGuardDuration = Duration(seconds: 30);
 
 const delayTimedOutValue = -1;
+const delayHelloStalledValue = -3;
 
 const probeTimeoutDuration = Duration(seconds: 10);
 

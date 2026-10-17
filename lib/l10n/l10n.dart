@@ -5645,6 +5645,11 @@ class AppLocalizations {
     return Intl.message('Failed', name: 'delayFailed', desc: '', args: []);
   }
 
+  /// `No reply`
+  String get helloStalled {
+    return Intl.message('No reply', name: 'helloStalled', desc: '', args: []);
+  }
+
   /// `{subRule} is an invalid SUB_RULE`
   String invalidSubRule(Object subRule) {
     return Intl.message(

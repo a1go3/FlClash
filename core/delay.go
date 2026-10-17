@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -39,8 +40,9 @@ func currentTestURL() string {
 }
 
 const (
-	delayTimedOut int32 = -1
-	delayFailed   int32 = -2
+	delayTimedOut     int32 = -1
+	delayFailed       int32 = -2
+	delayHelloStalled int32 = -3
 )
 
 func delayValue(delay uint16, timedOut bool) int32 {
@@ -96,5 +98,15 @@ func handleTestDelay(params *TestDelayParams) *Delay {
 		delay = 0
 	}
 	result.Value = delayValue(delay, ctx.Err() != nil)
+	if isHelloStall(err) {
+		result.Value = delayHelloStalled
+	}
 	return result
+}
+
+// The fork's core patch marks a REALITY ClientHello that got no answer; matching
+// the method rather than the type keeps this building against a stock core.
+func isHelloStall(err error) bool {
+	var stall interface{ HandshakeStalled() bool }
+	return errors.As(err, &stall) && stall.HandshakeStalled()
 }

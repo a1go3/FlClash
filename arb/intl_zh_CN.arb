@@ -676,6 +676,7 @@
   "proxyProvidersEmpty": "代理集为空",
   "timeout": "超时",
   "delayFailed": "失败",
+  "helloStalled": "无响应",
   "invalidSubRule": "{subRule} 是一个无效的SUB_RULE",
   "invalidPolicy": "{target} 是一个无效的策略",
   "invalidProxyProvider": "{providerName} 是一个无效的代理集",

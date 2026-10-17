@@ -865,6 +865,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Хешировать по пользователю входящего подключения",
     ),
     "healthCheck": MessageLookupByLibrary.simpleMessage("Проверка состояния"),
+    "helloStalled": MessageLookupByLibrary.simpleMessage("Нет ответа"),
     "helperCorruptTip": MessageLookupByLibrary.simpleMessage(
       "Служба Helper недоступна, поэтому TUN-режим включить нельзя. Переустановите FlClash.",
     ),

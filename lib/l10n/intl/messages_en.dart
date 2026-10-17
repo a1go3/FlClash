@@ -828,6 +828,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Hash by inbound user",
     ),
     "healthCheck": MessageLookupByLibrary.simpleMessage("Health check"),
+    "helloStalled": MessageLookupByLibrary.simpleMessage("No reply"),
     "helperCorruptTip": MessageLookupByLibrary.simpleMessage(
       "Helper service unavailable; TUN mode cannot be enabled. Reinstall FlClash to restore it.",
     ),

@@ -676,6 +676,7 @@
   "proxyProvidersEmpty": "プロキシプロバイダーが空です",
   "timeout": "タイムアウト",
   "delayFailed": "失敗",
+  "helloStalled": "応答なし",
   "invalidSubRule": "{subRule} は無効な SUB_RULE です",
   "invalidPolicy": "{target} は無効なポリシーです",
   "invalidProxyProvider": "{providerName} は無効なプロキシプロバイダーです",

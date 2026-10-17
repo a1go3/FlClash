@@ -265,6 +265,21 @@ func TestDelayValue(t *testing.T) {
 	}
 }
 
+type helloStallError struct{}
+
+func (helloStallError) Error() string { return "stalled" }
+
+func (helloStallError) HandshakeStalled() bool { return true }
+
+func TestIsHelloStall(t *testing.T) {
+	if !isHelloStall(fmt.Errorf("1.2.3.4:443 connect error: %w", helloStallError{})) {
+		t.Error("a wrapped stall is not recognised")
+	}
+	if isHelloStall(errors.New("connection refused")) || isHelloStall(nil) {
+		t.Error("an error without the stall method counts as a stall")
+	}
+}
+
 func TestProviderPathsStayUnderTheRoot(t *testing.T) {
 	home := filepath.Join("var", "home")
 	root, target := providerPaths(home, 1234567890123)

@@ -676,6 +676,7 @@
   "proxyProvidersEmpty": "Список провайдеров прокси пуст",
   "timeout": "Тайм-аут",
   "delayFailed": "Сбой",
+  "helloStalled": "Нет ответа",
   "invalidSubRule": "{subRule} — недопустимый SUB_RULE",
   "invalidPolicy": "{target} — недопустимая политика",
   "invalidProxyProvider": "{providerName} — недопустимый провайдер прокси",
