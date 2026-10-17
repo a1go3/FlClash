@@ -28,7 +28,7 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
       build: ${{ steps.check.outputs.build }}
     steps:
-      - name: Checkout the pinned upstream tag
+      - name: Checkout the fork patch set
         uses: actions/checkout@v4
         with:
           sparse-checkout: .github/fork
