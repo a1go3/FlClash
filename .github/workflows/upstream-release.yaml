@@ -151,6 +151,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout the fork patch set
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/fork
+
       - name: Download
         uses: actions/download-artifact@v4
         with:
@@ -166,13 +171,9 @@ jobs:
           release="pq-${TAG#v}"
           find dist -type f ! -name '*-setup.exe' ! -name '*.dmg' -delete
           (cd dist && sha256sum ./* > SHA256SUMS)
-          {
-            echo "Upstream $UPSTREAM $TAG with this fork's changes: a REALITY ClientHello split over several TLS records, safari and firefox client fingerprints with a post-quantum (X25519MLKEM768) key share, a one-line dashboard proxy groups card with a delay test button, a macOS menu bar icon that opens the window below it on a left click, the app's own requests going direct when the mixed port is disabled, XHTTP connection reuse by default, Google and Yandex DNS by default, a main window that renders on macOS 12, a "No reply" delay result and a log line when a REALITY ClientHello gets no answer, no group type label on the proxies page, and update checks against this fork. Unsigned build."
-            echo
-            echo "Upstream release: https://github.com/$UPSTREAM/releases/tag/$TAG"
-            echo
-            gh release view "$TAG" -R "$UPSTREAM" --json body --jq .body | sed -n '/<!-- flclash:changelog:begin -->/,/^-->/p'
-          } > notes.md
+          sed -e "s|{{UPSTREAM_TAG}}|$TAG|g" \
+            -e "s|{{UPSTREAM_RELEASE}}|https://github.com/$UPSTREAM/releases/tag/$TAG|g" \
+            .github/fork/release-notes.md > notes.md
           gh release delete "$release" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes 2> /dev/null || true
           # A new tag on a commit whose workflow files differ from the branch
           # head needs the workflows permission this token lacks, which a push
@@ -180,5 +181,5 @@ jobs:
           gh release create "$release" ./dist/* \
             -R "$GITHUB_REPOSITORY" \
             --target "${{ github.ref_name }}" \
-            --title "FlClash ${TAG#v} (fork)" \
+            --title "FlClash ${TAG#v} (форк)" \
             --notes-file notes.md

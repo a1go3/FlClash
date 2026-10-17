@@ -605,3 +605,15 @@ Labels for enum values go through the exhaustive switches in `lib/common/l10n_la
 failed lookup returns the key itself, so a stale key ships as `routeMode_config` in the UI rather than throwing.
 `test/lint/dynamic_message_key_test.dart` fails on any `Intl.message(` in `lib` outside the generated code, and checks
 that every locale carries the same keys and has a display name.
+
+## Fork Releases
+
+This fork (`a1go3/FlClash`) publishes releases as `pq-<upstream version>` from `.github/workflows/upstream-release.yaml`,
+started by hand. Release descriptions are written in Russian for the fork's users:
+
+- The description is `.github/fork/release-notes.md`; the workflow fills in `{{UPSTREAM_TAG}}` and `{{UPSTREAM_RELEASE}}`.
+  It carries no upstream changelog block, so the in-app update dialog lists its `- ` lines.
+- Every change the fork ships, whether a patch under `.github/fork/patches` or `.github/fork/core-patches`, adds or
+  updates a `- ` line there in Russian in the same commit, saying what the user notices. A change the fork drops
+  removes its line.
+- Commit messages and their `Changelog:` trailers stay English; the `commit-msg` hook enforces that.
