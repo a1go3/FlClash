@@ -1,0 +1,130 @@
+From 777c20f4d4edda492adeca8e6a8961705791b177 Mon Sep 17 00:00:00 2001
+From: a1go3 <116062404+a1go3@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 17:27:08 +0300
+Subject: [PATCH] fix(window): keep the Flutter view out of the macOS effect
+ view until blur is on
+
+Since 0.8.99 the macOS window hosts the Flutter view inside an NSVisualEffectView from startup and masks the material out with an empty maskImage while no effect is on. On macOS 12 Monterey such windows open blank, on Intel and Apple silicon alike (upstream #2506, #2650, #2724). The effect host now goes in on the first blur or acrylic, so with sidebar blur off, the default, the window keeps the hierarchy it had before 0.8.99.
+
+Changelog: macOS 12: the main window is no longer blank
+---
+ .agents/architecture.md                       |  5 +--
+ plugins/window/README.md                      | 19 +++++++-----
+ .../Sources/window/WindowController.swift     |  1 -
+ .../Sources/window/WindowEffectView.swift     | 31 +++++++++++++------
+ 4 files changed, 36 insertions(+), 20 deletions(-)
+
+diff --git a/.agents/architecture.md b/.agents/architecture.md
+index 3b71f20a..d28b2f75 100644
+--- a/.agents/architecture.md
++++ b/.agents/architecture.md
+@@ -1276,8 +1276,9 @@ table. `lib/common/window.dart` and `lib/manager/window_manager.dart` are the on
+ - Sidebar blur is soft-disabled: `feature.sidebarBlur` (`lib/common/feature.dart`) is off unless the build passes
+   `--dart-define=FEATURE_SIDEBAR_BLUR=true`. While it is off the theme page hides the toggle and
+   `windowBlurRequestProvider` asks for no effect whatever `ThemeProps.sidebarBlur` holds. `WindowManager` still sends
+-  that request at startup: the macOS plugin installs its effect view in `ensureInitialized` and leaves it active until
+-  the first `setEffect`, so the `none` request is what makes the window opaque and parks the effect view.
++  that request at startup, which makes the window opaque. The macOS plugin installs its effect view only on the first
++  `blur` or `acrylic`, so with the toggle off the Flutter view stays the window's content view; macOS 12 shows a blank
++  window when it is hosted in the masked effect view.
+ 
+ ## rust_api Crate Layout
+ 
+diff --git a/plugins/window/README.md b/plugins/window/README.md
+index 0124cef3..ddc1890b 100644
+--- a/plugins/window/README.md
++++ b/plugins/window/README.md
+@@ -135,14 +135,17 @@ The Flutter content must paint a translucent background for anything but
+ `none` to be visible.
+ 
+ On macOS the plugin follows macos_window_utils, which flutter_acrylic uses:
+-`ensureInitialized` installs a host view controller whose view is the
+-`NSVisualEffectView` and hosts the Flutter view controller as a child, so the
+-effect view is the Flutter view's superview for the life of the window.
+-Placing the effect view beneath the Flutter view as a sibling breaks input:
+-AppKit hands an unhandled `mouseDown` from a non-opaque view to the sibling
+-below it before the view controller, so Flutter never receives clicks. `none`
+-and `transparent` mask the material out with an empty `maskImage` and leave
+-the view inactive instead of swapping view controllers.
++the first `blur` or `acrylic` installs a host view controller whose view is the
++`NSVisualEffectView` and hosts the Flutter view controller as a child, so from
++then on the effect view is the Flutter view's superview for the life of the
++window. Placing the effect view beneath the Flutter view as a sibling breaks
++input: AppKit hands an unhandled `mouseDown` from a non-opaque view to the
++sibling below it before the view controller, so Flutter never receives clicks.
++Once installed, `none` and `transparent` mask the material out with an empty
++`maskImage` and leave the view inactive instead of swapping view controllers.
++Until then they only set the Flutter view controller's background: macOS 12
++leaves the window blank while the Flutter view sits in the masked effect view,
++so a window that never blurs keeps the plain hierarchy.
+ 
+ ## Lifecycle
+ 
+diff --git a/plugins/window/macos/window/Sources/window/WindowController.swift b/plugins/window/macos/window/Sources/window/WindowController.swift
+index de94a407..7e6de247 100644
+--- a/plugins/window/macos/window/Sources/window/WindowController.swift
++++ b/plugins/window/macos/window/Sources/window/WindowController.swift
+@@ -23,7 +23,6 @@ final class WindowController: NSObject, NSWindowDelegate {
+         previousDelegate = window.delegate
+         window.delegate = self
+         wasZoomed = window.isZoomed
+-        WindowEffectView.install(in: window)
+         // App deactivation rather than resignKey, so the app's own open and
+         // save panels do not dismiss the attached window.
+         resignActiveObserver = resignActiveObserver ?? NotificationCenter.default.addObserver(
+diff --git a/plugins/window/macos/window/Sources/window/WindowEffectView.swift b/plugins/window/macos/window/Sources/window/WindowEffectView.swift
+index ced69623..51a9172f 100644
+--- a/plugins/window/macos/window/Sources/window/WindowEffectView.swift
++++ b/plugins/window/macos/window/Sources/window/WindowEffectView.swift
+@@ -54,26 +54,39 @@ enum WindowEffectView {
+         }
+     }
+ 
+-    static func install(in window: NSWindow) {
++    private static func install(in window: NSWindow) -> EffectHostViewController? {
++        if let host = window.contentViewController as? EffectHostViewController {
++            return host
++        }
+         guard let flutterViewController = window.contentViewController as? FlutterViewController else {
+-            return
++            return nil
+         }
+         let frame = window.frame
+-        window.contentViewController = EffectHostViewController(hosting: flutterViewController)
++        let host = EffectHostViewController(hosting: flutterViewController)
++        window.contentViewController = host
+         window.setFrame(frame, display: true)
++        return host
+     }
+ 
+     static func apply(_ effect: WindowEffect, tint: NSColor?, appearance: NSAppearance?, to window: NSWindow) {
+-        guard let host = window.contentViewController as? EffectHostViewController else {
+-            return
+-        }
+-        let effectView = host.effectView
+         switch effect {
+         case .none, .transparent, .mica:
+-            effectView.maskImage = NSImage()
+-            effectView.state = .inactive
++            // The host goes in only once a material is asked for: macOS 12 leaves
++            // the window blank while the Flutter view sits in a masked effect
++            // view, so a window that never blurs keeps the plain hierarchy.
++            guard let host = window.contentViewController as? EffectHostViewController else {
++                (window.contentViewController as? FlutterViewController)?.backgroundColor =
++                    effect == .none ? .windowBackgroundColor : .clear
++                return
++            }
++            host.effectView.maskImage = NSImage()
++            host.effectView.state = .inactive
+             host.flutterViewController.backgroundColor = effect == .none ? .windowBackgroundColor : .clear
+         case .blur, .acrylic:
++            guard let host = install(in: window) else {
++                return
++            }
++            let effectView = host.effectView
+             effectView.maskImage = nil
+             effectView.material = effect == .blur ? .sidebar : .fullScreenUI
+             effectView.state = .followsWindowActiveState
+-- 
+2.55.0
+
