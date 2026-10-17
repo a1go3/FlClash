@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Upstream tag to build (default the latest release)
+        description: Upstream tag to build (default .github/fork/upstream-tag)
         required: false
       force:
         description: Rebuild even if this fork already has the release
@@ -28,6 +28,14 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
       build: ${{ steps.check.outputs.build }}
     steps:
+      - name: Checkout the pinned upstream tag
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/fork
+
+      # The patches are written against one upstream tag, so a release builds
+      # that tag, not upstream's latest; moving to a new tag is an edit of the
+      # file together with the patches ported to it.
       - name: Find the upstream release
         id: check
         env:
@@ -35,7 +43,7 @@ jobs:
           INPUT_TAG: ${{ inputs.tag }}
           FORCE: ${{ inputs.force }}
         run: |
-          tag="${INPUT_TAG:-$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)}"
+          tag="${INPUT_TAG:-$(tr -d '[:space:]' < .github/fork/upstream-tag)}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if [[ "$FORCE" != 'true' ]] && gh release view "pq-${tag#v}" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "pq-${tag#v} already exists"
