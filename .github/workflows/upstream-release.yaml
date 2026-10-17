@@ -174,8 +174,11 @@ jobs:
             gh release view "$TAG" -R "$UPSTREAM" --json body --jq .body | sed -n '/<!-- flclash:changelog:begin -->/,/^-->/p'
           } > notes.md
           gh release delete "$release" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes 2> /dev/null || true
+          # A new tag on a commit whose workflow files differ from the branch
+          # head needs the workflows permission this token lacks, which a push
+          # during the build causes; the branch head always passes.
           gh release create "$release" ./dist/* \
             -R "$GITHUB_REPOSITORY" \
-            --target "${{ github.sha }}" \
+            --target "${{ github.ref_name }}" \
             --title "FlClash ${TAG#v} (fork)" \
             --notes-file notes.md
