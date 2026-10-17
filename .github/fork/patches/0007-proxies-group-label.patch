@@ -1,0 +1,67 @@
+From 77bd948b3879adfaee08b7d07ca098ffec20fc78 Mon Sep 17 00:00:00 2001
+From: a1go3 <116062404+a1go3@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 18:05:33 +0300
+Subject: [PATCH] feat(proxies): drop the group type label from the group
+ header
+
+The collapsed header showed the group's type, such as Selector, beside the expand button; it tells the user nothing they act on, so the header now carries only the expand button until the group opens.
+
+Changelog: The proxies page no longer shows a group's type beside its name
+---
+ lib/views/proxies/list.dart | 12 ++++--------
+ 1 file changed, 4 insertions(+), 8 deletions(-)
+
+diff --git a/lib/views/proxies/list.dart b/lib/views/proxies/list.dart
+index eefd97f1..0747c9b9 100644
+--- a/lib/views/proxies/list.dart
++++ b/lib/views/proxies/list.dart
+@@ -394,7 +394,6 @@ class ListHeader extends ConsumerWidget {
+             _GroupActions(
+               isExpand: isExpand,
+               isDelayTesting: isDelayTesting,
+-              groupType: group.type.name,
+               onScrollToSelected: () {
+                 onScrollToSelected(groupName);
+               },
+@@ -526,7 +525,6 @@ class _GroupActions extends StatelessWidget {
+   const _GroupActions({
+     required this.isExpand,
+     required this.isDelayTesting,
+-    required this.groupType,
+     required this.onScrollToSelected,
+     required this.onDelayTest,
+     required this.onToggle,
+@@ -534,7 +532,6 @@ class _GroupActions extends StatelessWidget {
+ 
+   final bool isExpand;
+   final bool isDelayTesting;
+-  final String groupType;
+   final VoidCallback onScrollToSelected;
+   final VoidCallback onDelayTest;
+   final VoidCallback onToggle;
+@@ -545,7 +542,7 @@ class _GroupActions extends StatelessWidget {
+       size: TonalButtonSize.compact,
+       child: Row(
+         children: [
+-          if (isExpand)
++          if (isExpand) ...[
+             TonalButtonGroup(
+               size: TonalButtonSize.compact,
+               children: [
+@@ -569,10 +566,9 @@ class _GroupActions extends StatelessWidget {
+                       : const GlyphIcon(AppGlyphs.bolt),
+                 ),
+               ],
+-            )
+-          else
+-            Text(groupType, style: context.textTheme.labelMedium?.toLight),
+-          const SizedBox(width: 6),
++            ),
++            const SizedBox(width: 6),
++          ],
+           ElasticPress(
+             child: IconButton(
+               tooltip: isExpand
+-- 
+2.55.0
+

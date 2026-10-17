@@ -159,7 +159,7 @@ jobs:
           find dist -type f ! -name '*-setup.exe' ! -name '*.dmg' -delete
           (cd dist && sha256sum ./* > SHA256SUMS)
           {
-            echo "Upstream $UPSTREAM $TAG with this fork's changes: a REALITY ClientHello split over several TLS records, safari and firefox client fingerprints with a post-quantum (X25519MLKEM768) key share, a one-line dashboard proxy groups card with a delay test button, a macOS menu bar icon that opens the window below it on a left click, the app's own requests going direct when the mixed port is disabled, XHTTP connection reuse by default, Google and Yandex DNS by default, a main window that renders on macOS 12, and update checks against this fork. Unsigned build."
+            echo "Upstream $UPSTREAM $TAG with this fork's changes: a REALITY ClientHello split over several TLS records, safari and firefox client fingerprints with a post-quantum (X25519MLKEM768) key share, a one-line dashboard proxy groups card with a delay test button, a macOS menu bar icon that opens the window below it on a left click, the app's own requests going direct when the mixed port is disabled, XHTTP connection reuse by default, Google and Yandex DNS by default, a main window that renders on macOS 12, a "No reply" delay result and a log line when a REALITY ClientHello gets no answer, no group type label on the proxies page, and update checks against this fork. Unsigned build."
             echo
             echo "Upstream release: https://github.com/$UPSTREAM/releases/tag/$TAG"
             echo

@@ -1,0 +1,343 @@
+From b8387ead07d08a440c5592b0781028044d2815a3 Mon Sep 17 00:00:00 2001
+From: a1go3 <116062404+a1go3@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 18:13:40 +0300
+Subject: [PATCH] feat(reality): log a ClientHello nobody answers and report it
+ as a stall
+
+A provider filter that freezes a server address and port lets the TCP connection up and then drops the ClientHello, so the client only saw a timeout. A REALITY handshake that runs out of time now logs the server address and returns a HandshakeStallError, which VLESS dials keep wrapped up to URLTest. XHTTP transports dial apart from the stream, so their handshakes get the TLS timeout instead of waiting for good, and a dial that runs out of time while one still waits is reported as a stall.
+---
+ adapter/outbound/vless.go     | 28 ++++++++++---
+ adapter/reality_stall_test.go | 79 +++++++++++++++++++++++++++++++++++
+ component/tls/reality.go      |  4 ++
+ component/tls/stall.go        | 36 ++++++++++++++++
+ component/tls/stall_test.go   | 79 +++++++++++++++++++++++++++++++++++
+ 5 files changed, 220 insertions(+), 6 deletions(-)
+ create mode 100644 adapter/reality_stall_test.go
+ create mode 100644 component/tls/stall.go
+ create mode 100644 component/tls/stall_test.go
+
+diff --git a/adapter/outbound/vless.go b/adapter/outbound/vless.go
+index e77b322..bb6dfa2 100644
+--- a/adapter/outbound/vless.go
++++ b/adapter/outbound/vless.go
+@@ -8,6 +8,7 @@ import (
+ 	"net/netip"
+ 	"strconv"
+ 	"strings"
++	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/metacubex/mihomo/common/convert"
+@@ -54,6 +55,9 @@ type Vless struct {
+ 	jlsConfig       *jls.Config
+ 	realityConfig   *tlsC.RealityConfig
+ 	fragmentConfig  *tlsC.FragmentConfig
++
++	// for xhttp: TLS handshakes still waiting for the server's answer
++	pendingHandshakes atomic.Int32
+ }
+ 
+ type VlessOption struct {
+@@ -376,7 +380,13 @@ func (v *Vless) dialContext(ctx context.Context) (c net.Conn, err error) {
+ 	case "grpc": // gun transport
+ 		return v.gunClient.Dial()
+ 	case "xhttp":
+-		return v.xhttpClient.Dial(ctx)
++		c, err = v.xhttpClient.Dial(ctx)
++		// Streams ride on connections the transport dials apart from them, so a
++		// dial out of time while a handshake still waits for the server is a stall.
++		if err != nil && ctx.Err() != nil && v.pendingHandshakes.Load() > 0 {
++			err = &tlsC.HandshakeStallError{Err: err}
++		}
++		return c, err
+ 	default:
+ 	}
+ 	return v.dialer.DialContext(ctx, "tcp", v.addr)
+@@ -386,7 +396,7 @@ func (v *Vless) dialContext(ctx context.Context) (c net.Conn, err error) {
+ func (v *Vless) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
+ 	c, err := v.dialContext(ctx)
+ 	if err != nil {
+-		return nil, fmt.Errorf("%s connect error: %s", v.addr, err.Error())
++		return nil, fmt.Errorf("%s connect error: %w", v.addr, err)
+ 	}
+ 	defer func(c net.Conn) {
+ 		safeConnClose(c, err)
+@@ -394,7 +404,7 @@ func (v *Vless) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn
+ 
+ 	c, err = v.StreamConnContext(ctx, c, metadata)
+ 	if err != nil {
+-		return nil, fmt.Errorf("%s connect error: %s", v.addr, err.Error())
++		return nil, fmt.Errorf("%s connect error: %w", v.addr, err)
+ 	}
+ 	return NewConn(c, v), err
+ }
+@@ -407,7 +417,7 @@ func (v *Vless) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (
+ 
+ 	c, err := v.dialContext(ctx)
+ 	if err != nil {
+-		return nil, fmt.Errorf("%s connect error: %s", v.addr, err.Error())
++		return nil, fmt.Errorf("%s connect error: %w", v.addr, err)
+ 	}
+ 	defer func(c net.Conn) {
+ 		safeConnClose(c, err)
+@@ -415,7 +425,7 @@ func (v *Vless) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (
+ 
+ 	c, err = v.StreamConnContext(ctx, c, metadata)
+ 	if err != nil {
+-		return nil, fmt.Errorf("%s connect error: %s", v.addr, err.Error())
++		return nil, fmt.Errorf("%s connect error: %w", v.addr, err)
+ 	}
+ 
+ 	if v.option.XUDP {
+@@ -604,7 +614,7 @@ func NewVless(option VlessOption) (*Vless, error) {
+ 		dialFn := func(ctx context.Context, network, addr string) (net.Conn, error) {
+ 			c, err := v.dialer.DialContext(ctx, "tcp", v.addr)
+ 			if err != nil {
+-				return nil, fmt.Errorf("%s connect error: %s", v.addr, err.Error())
++				return nil, fmt.Errorf("%s connect error: %w", v.addr, err)
+ 			}
+ 			return c, nil
+ 		}
+@@ -710,6 +720,12 @@ func NewVless(option VlessOption) (*Vless, error) {
+ 					return v.dialer.DialContext(ctx, "tcp", v.addr)
+ 				},
+ 				func(ctx context.Context, raw net.Conn, isH2 bool) (net.Conn, error) {
++					// The transport's dial need not carry a request's deadline, and a
++					// ClientHello nobody answers would otherwise wait for good.
++					ctx, cancel := context.WithTimeout(ctx, C.DefaultTLSTimeout)
++					defer cancel()
++					v.pendingHandshakes.Add(1)
++					defer v.pendingHandshakes.Add(-1)
+ 					return v.streamTLSConn(ctx, raw, isH2)
+ 				},
+ 				func(ctx context.Context, cfg *quic.Config) (*quic.Conn, error) {
+diff --git a/adapter/reality_stall_test.go b/adapter/reality_stall_test.go
+new file mode 100644
+index 0000000..2725569
+--- /dev/null
++++ b/adapter/reality_stall_test.go
+@@ -0,0 +1,79 @@
++package adapter_test
++
++import (
++	"context"
++	"crypto/ecdh"
++	"crypto/rand"
++	"encoding/base64"
++	"errors"
++	"net"
++	"strconv"
++	"testing"
++	"time"
++
++	"github.com/metacubex/mihomo/adapter"
++	"github.com/metacubex/mihomo/adapter/outbound"
++
++	"github.com/stretchr/testify/require"
++)
++
++// silentServer accepts TCP connections and never answers, like a server port
++// a provider filter has frozen.
++func silentServer(t *testing.T) (string, int) {
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	t.Cleanup(func() { listener.Close() })
++	go func() {
++		for {
++			conn, err := listener.Accept()
++			if err != nil {
++				return
++			}
++			go func() {
++				defer conn.Close()
++				_, _ = conn.Read(make([]byte, 4096))
++				time.Sleep(5 * time.Second)
++			}()
++		}
++	}()
++	host, port, _ := net.SplitHostPort(listener.Addr().String())
++	portNumber, _ := strconv.Atoi(port)
++	return host, portNumber
++}
++
++func TestURLTestReportsAStalledRealityHandshake(t *testing.T) {
++	key, err := ecdh.X25519().GenerateKey(rand.Reader)
++	require.NoError(t, err)
++	for name, network := range map[string]string{"tcp": "", "xhttp": "xhttp"} {
++		t.Run(name, func(t *testing.T) {
++			host, port := silentServer(t)
++			option := outbound.VlessOption{
++				Name:              "stall",
++				Server:            host,
++				Port:              port,
++				UUID:              "b831381d-6324-4d53-ad4f-8cda48b30811",
++				TLS:               true,
++				ServerName:        "www.example.com",
++				ClientFingerprint: "safari",
++				Network:           network,
++				RealityOpts: outbound.RealityOptions{
++					PublicKey:             base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()),
++					SupportX25519MLKEM768: true,
++				},
++			}
++			if network == "xhttp" {
++				option.XHTTPOpts = outbound.XHTTPOptions{Path: "/", Mode: "auto"}
++			}
++			vless, err := outbound.NewVless(option)
++			require.NoError(t, err)
++			proxy := adapter.NewProxy(vless)
++
++			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++			defer cancel()
++			_, err = proxy.URLTest(ctx, "https://www.gstatic.com/generate_204", nil)
++
++			var stall interface{ HandshakeStalled() bool }
++			require.True(t, errors.As(err, &stall), "got %v", err)
++		})
++	}
++}
+diff --git a/component/tls/reality.go b/component/tls/reality.go
+index ff6a0a3..14697a5 100644
+--- a/component/tls/reality.go
++++ b/component/tls/reality.go
+@@ -117,6 +117,10 @@ func GetRealityConn(ctx context.Context, conn net.Conn, fingerprint UClientHello
+ 
+ 		err = uConn.HandshakeContext(ctx)
+ 		if err != nil {
++			if isHandshakeStall(ctx, err) {
++				log.Warnln("[REALITY] %s: no answer to the ClientHello after the TCP connect: %v", conn.RemoteAddr(), err)
++				return nil, &HandshakeStallError{Err: err}
++			}
+ 			return nil, err
+ 		}
+ 
+diff --git a/component/tls/stall.go b/component/tls/stall.go
+new file mode 100644
+index 0000000..2463583
+--- /dev/null
++++ b/component/tls/stall.go
+@@ -0,0 +1,36 @@
++package tls
++
++import (
++	"context"
++	"errors"
++	"net"
++)
++
++// HandshakeStallError is a TLS handshake whose TCP connection came up but
++// whose ClientHello got no answer in time, which is how a provider filter
++// freezing a server address and port looks from the client.
++type HandshakeStallError struct {
++	Err error
++}
++
++func (e *HandshakeStallError) Error() string {
++	return "TLS handshake stalled after the ClientHello: " + e.Err.Error()
++}
++
++func (e *HandshakeStallError) Unwrap() error {
++	return e.Err
++}
++
++// HandshakeStalled lets callers outside this module recognise the error with
++// errors.As on an interface, without importing the type.
++func (e *HandshakeStallError) HandshakeStalled() bool {
++	return true
++}
++
++func isHandshakeStall(ctx context.Context, err error) bool {
++	if ctx.Err() != nil {
++		return true
++	}
++	var netErr net.Error
++	return errors.As(err, &netErr) && netErr.Timeout()
++}
+diff --git a/component/tls/stall_test.go b/component/tls/stall_test.go
+new file mode 100644
+index 0000000..b020deb
+--- /dev/null
++++ b/component/tls/stall_test.go
+@@ -0,0 +1,79 @@
++package tls
++
++import (
++	"context"
++	"crypto/ecdh"
++	"crypto/rand"
++	"errors"
++	"net"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestRealityHandshakeWithoutAnswerIsAStall(t *testing.T) {
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	defer listener.Close()
++	go func() {
++		conn, err := listener.Accept()
++		if err != nil {
++			return
++		}
++		defer conn.Close()
++		_, _ = conn.Read(make([]byte, 4096))
++		time.Sleep(time.Second)
++	}()
++
++	conn, err := net.Dial("tcp", listener.Addr().String())
++	require.NoError(t, err)
++	defer conn.Close()
++	key, err := ecdh.X25519().GenerateKey(rand.Reader)
++	require.NoError(t, err)
++	fingerprint, ok := GetFingerprint("safari")
++	require.True(t, ok)
++
++	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
++	defer cancel()
++	_, err = GetRealityConn(ctx, conn, fingerprint, "www.example.com", &RealityConfig{
++		PublicKey:             key.PublicKey(),
++		SupportX25519MLKEM768: true,
++	})
++
++	var stall interface{ HandshakeStalled() bool }
++	require.True(t, errors.As(err, &stall), "got %v", err)
++}
++
++func TestRealityHandshakeRefusedByTheServerIsNoStall(t *testing.T) {
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	defer listener.Close()
++	go func() {
++		conn, err := listener.Accept()
++		if err != nil {
++			return
++		}
++		_, _ = conn.Read(make([]byte, 4096))
++		conn.Close()
++	}()
++
++	conn, err := net.Dial("tcp", listener.Addr().String())
++	require.NoError(t, err)
++	defer conn.Close()
++	key, err := ecdh.X25519().GenerateKey(rand.Reader)
++	require.NoError(t, err)
++	fingerprint, ok := GetFingerprint("safari")
++	require.True(t, ok)
++
++	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
++	defer cancel()
++	_, err = GetRealityConn(ctx, conn, fingerprint, "www.example.com", &RealityConfig{
++		PublicKey:             key.PublicKey(),
++		SupportX25519MLKEM768: true,
++	})
++
++	require.Error(t, err)
++	var stall interface{ HandshakeStalled() bool }
++	require.False(t, errors.As(err, &stall), "got %v", err)
++}
+-- 
+2.55.0
+

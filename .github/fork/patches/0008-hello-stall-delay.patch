@@ -1,0 +1,237 @@
+From d077a25d1b1c5059a66d934ec0931b4d63c303fe Mon Sep 17 00:00:00 2001
+From: a1go3 <116062404+a1go3@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 18:18:56 +0300
+Subject: [PATCH] feat(proxies): tell a ClientHello nobody answered apart from
+ a timeout
+
+A frozen server port lets the TCP connection up and drops the ClientHello, which the delay test showed as a plain timeout. The core now answers -3 for a test whose error carries the HandshakeStalled marker the fork's core patch sets, and the proxies page, dashboard and tray show "No reply" for it. The marker is matched by method, so the core still builds against a stock mihomo.
+
+Changelog: Delay tests show "No reply" when the server never answered the TLS hello
+---
+ arb/intl_en.arb                   |  1 +
+ arb/intl_ja.arb                   |  1 +
+ arb/intl_ru.arb                   |  1 +
+ arb/intl_zh_CN.arb                |  1 +
+ core/delay.go                     | 16 ++++++++++++++--
+ core/hub_test.go                  | 15 +++++++++++++++
+ lib/common/app_localizations.dart |  8 +++++---
+ lib/common/constant.dart          |  1 +
+ lib/l10n/intl/messages_en.dart    |  1 +
+ lib/l10n/intl/messages_ja.dart    |  1 +
+ lib/l10n/intl/messages_ru.dart    |  1 +
+ lib/l10n/intl/messages_zh_CN.dart |  1 +
+ lib/l10n/l10n.dart                |  5 +++++
+ 13 files changed, 48 insertions(+), 5 deletions(-)
+
+diff --git a/arb/intl_en.arb b/arb/intl_en.arb
+index 7ed01b08..57126c27 100644
+--- a/arb/intl_en.arb
++++ b/arb/intl_en.arb
+@@ -676,6 +676,7 @@
+   "proxyProvidersEmpty": "Proxy providers are empty",
+   "timeout": "Timeout",
+   "delayFailed": "Failed",
++  "helloStalled": "No reply",
+   "invalidSubRule": "{subRule} is an invalid SUB_RULE",
+   "invalidPolicy": "{target} is an invalid policy",
+   "invalidProxyProvider": "{providerName} is an invalid proxy provider",
+diff --git a/arb/intl_ja.arb b/arb/intl_ja.arb
+index 78b839ba..a5889cc5 100644
+--- a/arb/intl_ja.arb
++++ b/arb/intl_ja.arb
+@@ -676,6 +676,7 @@
+   "proxyProvidersEmpty": "プロキシプロバイダーが空です",
+   "timeout": "タイムアウト",
+   "delayFailed": "失敗",
++  "helloStalled": "応答なし",
+   "invalidSubRule": "{subRule} は無効な SUB_RULE です",
+   "invalidPolicy": "{target} は無効なポリシーです",
+   "invalidProxyProvider": "{providerName} は無効なプロキシプロバイダーです",
+diff --git a/arb/intl_ru.arb b/arb/intl_ru.arb
+index 7e39fee4..d8123eb1 100644
+--- a/arb/intl_ru.arb
++++ b/arb/intl_ru.arb
+@@ -676,6 +676,7 @@
+   "proxyProvidersEmpty": "Список провайдеров прокси пуст",
+   "timeout": "Тайм-аут",
+   "delayFailed": "Сбой",
++  "helloStalled": "Нет ответа",
+   "invalidSubRule": "{subRule} — недопустимый SUB_RULE",
+   "invalidPolicy": "{target} — недопустимая политика",
+   "invalidProxyProvider": "{providerName} — недопустимый провайдер прокси",
+diff --git a/arb/intl_zh_CN.arb b/arb/intl_zh_CN.arb
+index 298227be..010ae999 100644
+--- a/arb/intl_zh_CN.arb
++++ b/arb/intl_zh_CN.arb
+@@ -676,6 +676,7 @@
+   "proxyProvidersEmpty": "代理集为空",
+   "timeout": "超时",
+   "delayFailed": "失败",
++  "helloStalled": "无响应",
+   "invalidSubRule": "{subRule} 是一个无效的SUB_RULE",
+   "invalidPolicy": "{target} 是一个无效的策略",
+   "invalidProxyProvider": "{providerName} 是一个无效的代理集",
+diff --git a/core/delay.go b/core/delay.go
+index 41d69e0a..2b8081bb 100644
+--- a/core/delay.go
++++ b/core/delay.go
+@@ -2,6 +2,7 @@ package core
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"sync/atomic"
+ 	"time"
+ 
+@@ -39,8 +40,9 @@ func currentTestURL() string {
+ }
+ 
+ const (
+-	delayTimedOut int32 = -1
+-	delayFailed   int32 = -2
++	delayTimedOut     int32 = -1
++	delayFailed       int32 = -2
++	delayHelloStalled int32 = -3
+ )
+ 
+ func delayValue(delay uint16, timedOut bool) int32 {
+@@ -96,5 +98,15 @@ func handleTestDelay(params *TestDelayParams) *Delay {
+ 		delay = 0
+ 	}
+ 	result.Value = delayValue(delay, ctx.Err() != nil)
++	if isHelloStall(err) {
++		result.Value = delayHelloStalled
++	}
+ 	return result
+ }
++
++// The fork's core patch marks a REALITY ClientHello that got no answer; matching
++// the method rather than the type keeps this building against a stock core.
++func isHelloStall(err error) bool {
++	var stall interface{ HandshakeStalled() bool }
++	return errors.As(err, &stall) && stall.HandshakeStalled()
++}
+diff --git a/core/hub_test.go b/core/hub_test.go
+index 95df0269..c2371288 100644
+--- a/core/hub_test.go
++++ b/core/hub_test.go
+@@ -265,6 +265,21 @@ func TestDelayValue(t *testing.T) {
+ 	}
+ }
+ 
++type helloStallError struct{}
++
++func (helloStallError) Error() string { return "stalled" }
++
++func (helloStallError) HandshakeStalled() bool { return true }
++
++func TestIsHelloStall(t *testing.T) {
++	if !isHelloStall(fmt.Errorf("1.2.3.4:443 connect error: %w", helloStallError{})) {
++		t.Error("a wrapped stall is not recognised")
++	}
++	if isHelloStall(errors.New("connection refused")) || isHelloStall(nil) {
++		t.Error("an error without the stall method counts as a stall")
++	}
++}
++
+ func TestProviderPathsStayUnderTheRoot(t *testing.T) {
+ 	home := filepath.Join("var", "home")
+ 	root, target := providerPaths(home, 1234567890123)
+diff --git a/lib/common/app_localizations.dart b/lib/common/app_localizations.dart
+index 3ad96ef7..739e42c0 100644
+--- a/lib/common/app_localizations.dart
++++ b/lib/common/app_localizations.dart
+@@ -41,9 +41,11 @@ String userFacingErrorMessage(Object error, AppLocalizations appLocalizations) {
+ }
+ 
+ String delayFailureText(int delay, AppLocalizations appLocalizations) {
+-  return delay == delayTimedOutValue
+-      ? appLocalizations.timeout
+-      : appLocalizations.delayFailed;
++  return switch (delay) {
++    delayTimedOutValue => appLocalizations.timeout,
++    delayHelloStalledValue => appLocalizations.helloStalled,
++    _ => appLocalizations.delayFailed,
++  };
+ }
+ 
+ Locale? getLocaleForString(String? localString) {
+diff --git a/lib/common/constant.dart b/lib/common/constant.dart
+index 5904b420..e9651c68 100644
+--- a/lib/common/constant.dart
++++ b/lib/common/constant.dart
+@@ -73,6 +73,7 @@ const delayTestTimeoutDuration = Duration(seconds: 8);
+ const delayTestGuardDuration = Duration(seconds: 30);
+ 
+ const delayTimedOutValue = -1;
++const delayHelloStalledValue = -3;
+ 
+ const probeTimeoutDuration = Duration(seconds: 10);
+ 
+diff --git a/lib/l10n/intl/messages_en.dart b/lib/l10n/intl/messages_en.dart
+index c2ef8b44..7cda2d16 100644
+--- a/lib/l10n/intl/messages_en.dart
++++ b/lib/l10n/intl/messages_en.dart
+@@ -828,6 +828,7 @@ class MessageLookup extends MessageLookupByLibrary {
+       "Hash by inbound user",
+     ),
+     "healthCheck": MessageLookupByLibrary.simpleMessage("Health check"),
++    "helloStalled": MessageLookupByLibrary.simpleMessage("No reply"),
+     "helperCorruptTip": MessageLookupByLibrary.simpleMessage(
+       "Helper service unavailable; TUN mode cannot be enabled. Reinstall FlClash to restore it.",
+     ),
+diff --git a/lib/l10n/intl/messages_ja.dart b/lib/l10n/intl/messages_ja.dart
+index db5eb0f6..b339858b 100644
+--- a/lib/l10n/intl/messages_ja.dart
++++ b/lib/l10n/intl/messages_ja.dart
+@@ -696,6 +696,7 @@ class MessageLookup extends MessageLookupByLibrary {
+     "hasCacheChange": MessageLookupByLibrary.simpleMessage("変更をキャッシュしますか？"),
+     "hashByInUser": MessageLookupByLibrary.simpleMessage("インバウンドユーザーでハッシュ"),
+     "healthCheck": MessageLookupByLibrary.simpleMessage("ヘルスチェック"),
++    "helloStalled": MessageLookupByLibrary.simpleMessage("応答なし"),
+     "helperCorruptTip": MessageLookupByLibrary.simpleMessage(
+       "Helper サービスが利用できないため、TUN モードを有効にできません。FlClash を再インストールしてください。",
+     ),
+diff --git a/lib/l10n/intl/messages_ru.dart b/lib/l10n/intl/messages_ru.dart
+index e7dd2647..f1b3ffa7 100644
+--- a/lib/l10n/intl/messages_ru.dart
++++ b/lib/l10n/intl/messages_ru.dart
+@@ -865,6 +865,7 @@ class MessageLookup extends MessageLookupByLibrary {
+       "Хешировать по пользователю входящего подключения",
+     ),
+     "healthCheck": MessageLookupByLibrary.simpleMessage("Проверка состояния"),
++    "helloStalled": MessageLookupByLibrary.simpleMessage("Нет ответа"),
+     "helperCorruptTip": MessageLookupByLibrary.simpleMessage(
+       "Служба Helper недоступна, поэтому TUN-режим включить нельзя. Переустановите FlClash.",
+     ),
+diff --git a/lib/l10n/intl/messages_zh_CN.dart b/lib/l10n/intl/messages_zh_CN.dart
+index d3b6074e..631e2ced 100644
+--- a/lib/l10n/intl/messages_zh_CN.dart
++++ b/lib/l10n/intl/messages_zh_CN.dart
+@@ -637,6 +637,7 @@ class MessageLookup extends MessageLookupByLibrary {
+     "hasCacheChange": MessageLookupByLibrary.simpleMessage("是否缓存修改"),
+     "hashByInUser": MessageLookupByLibrary.simpleMessage("按入站用户哈希"),
+     "healthCheck": MessageLookupByLibrary.simpleMessage("健康检查"),
++    "helloStalled": MessageLookupByLibrary.simpleMessage("无响应"),
+     "helperCorruptTip": MessageLookupByLibrary.simpleMessage(
+       "Helper 服务不可用，无法启用 TUN 模式，请重新安装 FlClash。",
+     ),
+diff --git a/lib/l10n/l10n.dart b/lib/l10n/l10n.dart
+index 428a26f7..d98b01ae 100644
+--- a/lib/l10n/l10n.dart
++++ b/lib/l10n/l10n.dart
+@@ -5645,6 +5645,11 @@ class AppLocalizations {
+     return Intl.message('Failed', name: 'delayFailed', desc: '', args: []);
+   }
+ 
++  /// `No reply`
++  String get helloStalled {
++    return Intl.message('No reply', name: 'helloStalled', desc: '', args: []);
++  }
++
+   /// `{subRule} is an invalid SUB_RULE`
+   String invalidSubRule(Object subRule) {
+     return Intl.message(
+-- 
+2.55.0
+
